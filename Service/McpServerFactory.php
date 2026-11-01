@@ -34,10 +34,10 @@ use Symfony\Component\Cache\Psr16Cache;
  */
 class McpServerFactory
 {
-    public const VERSION = '0.2.0';
+    public const VERSION = '0.3.0';
 
     /** Tools that need the mcp:write scope. */
-    private const WRITE_TOOLS = ['create_email_draft', 'update_email_draft', 'create_campaign_draft', 'update_campaign_draft', 'set_campaign_steps'];
+    private const WRITE_TOOLS = ['create_email_draft', 'update_email_draft', 'create_campaign_draft', 'update_campaign_draft', 'set_campaign_steps', 'update_campaign_step', 'add_campaign_step', 'remove_campaign_step'];
 
     public function __construct(
         private readonly OAuthSettings $oauth,
@@ -111,7 +111,7 @@ class McpServerFactory
             ->setServerInfo('Mautic', self::VERSION, 'Mautic marketing automation (Kopexa build)', websiteUrl: $this->oauth->issuer(), title: 'Mautic')
             ->setInstructions(implode("\n", [
                 'Mautic marketing automation. Read contacts, segments, emails, campaigns and email statistics.',
-                'Write tools only create or change UNPUBLISHED drafts; a person reviews and publishes them in Mautic. Nothing is ever sent from here.',
+                'Write tools create and change drafts; publishing and sending stay with a person in Mautic. Campaign flows of running campaigns can be edited step by step (get_campaign, then update/add/remove_campaign_step); use dryRun first and tell the user how many contacts a removal affects.',
                 'Every call runs with the Mautic permissions of the signed-in user.',
                 'Return the "url" of created drafts to the user so they can review them.',
             ]))
@@ -131,7 +131,10 @@ class McpServerFactory
             ->addTool([$this->write, 'updateEmailDraft'], 'update_email_draft', 'Update email draft', null, $rw)
             ->addTool([$this->write, 'createCampaignDraft'], 'create_campaign_draft', 'Create campaign draft', null, $rw)
             ->addTool([$this->write, 'updateCampaignDraft'], 'update_campaign_draft', 'Update campaign draft', null, $rw)
-            ->addTool([$this->write, 'setCampaignSteps'], 'set_campaign_steps', 'Set campaign steps', null, new ToolAnnotations(readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false))
+            ->addTool([$this->write, 'setCampaignSteps'], 'set_campaign_steps', 'Set campaign flow', null, new ToolAnnotations(readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false))
+            ->addTool([$this->write, 'updateCampaignStep'], 'update_campaign_step', 'Update campaign step', null, new ToolAnnotations(readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false))
+            ->addTool([$this->write, 'addCampaignStep'], 'add_campaign_step', 'Add campaign step', null, $rw)
+            ->addTool([$this->write, 'removeCampaignStep'], 'remove_campaign_step', 'Remove campaign step', null, new ToolAnnotations(readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false))
             ->build();
     }
 }

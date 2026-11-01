@@ -188,7 +188,7 @@ class ReadTools
     }
 
     /**
-     * Get one campaign with its segments and events (sources, decisions, actions, conditions).
+     * Get one campaign with its segments and its flow (steps: actions, decisions, conditions, waits, yes/no paths, contacts per step), in the format set_campaign_steps accepts.
      *
      * @param int $id Campaign ID
      *
@@ -202,25 +202,10 @@ class ReadTools
         }
         $this->auth->requireEntityAccess($context, $campaign, 'campaign:campaigns', 'view');
 
-        $events = [];
-        foreach ($campaign->getEvents() as $event) {
-            if ($event->isDeleted()) {
-                continue;
-            }
-            $events[] = [
-                'id'         => $event->getId(),
-                'name'       => $event->getName(),
-                'event_type' => $event->getEventType(),
-                'type'       => $event->getType(),
-                'parent_id'  => $event->getParent()?->getId(),
-                'path'       => $event->getDecisionPath(),
-                'trigger'    => $event->getTriggerMode(),
-                'interval'   => 'interval' === $event->getTriggerMode() ? $event->getTriggerInterval().' '.$event->getTriggerIntervalUnit() : null,
-                'properties' => $event->getProperties(),
-            ];
-        }
-
-        return $this->campaignSummary($campaign) + ['events' => $events];
+        return $this->campaignSummary($campaign) + [
+            'steps' => $this->flow->currentSteps($campaign),
+            'hint'  => 'steps use the format of set_campaign_steps; keys are step IDs. Edit with update_campaign_step / add_campaign_step / remove_campaign_step, or send the whole list back to set_campaign_steps.',
+        ];
     }
 
     /**

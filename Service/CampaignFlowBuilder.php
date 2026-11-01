@@ -89,44 +89,174 @@ class CampaignFlowBuilder
     }
 
     /**
-     * Replace the whole event tree of a campaign.
+     * The campaign's flow in the same format set_campaign_steps accepts.
+     * Keys of existing steps are their Mautic event IDs.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function currentSteps(Campaign $campaign): array
+    {
+        $events = $this->liveEvents($campaign);
+        $stats  = $this->eventStats(array_keys($events));
+        // Parents before children (Mautic's order is breadth-first by level).
+        uasort($events, fn (Event $a, Event $b): int => [$a->getOrder(), $a->getId()] <=> [$b->getOrder(), $b->getId()]);
+
+        $steps = [];
+        foreach ($events as $id => $event) {
+            $step = [
+                'key'        => (string) $id,
+                'type'       => $event->getType(),
+                'kind'       => $event->getEventType(),
+                'name'       => $event->getName(),
+            ];
+            if ($event->getParent()) {
+                $step['parent'] = (string) $event->getParent()->getId();
+                if (null !== $event->getDecisionPath()) {
+                    $step['path'] = $event->getDecisionPath();
+                }
+            }
+            if ($wait = $this->waitOf($event)) {
+                $step['wait'] = $wait;
+            }
+            // Empty properties are left out: PHP would encode them as [] (not {}).
+            if ([] !== ($properties = $this->settingsOf($event->getType(), $event->getProperties()))) {
+                $step['properties'] = $properties;
+            }
+            $step['contacts']   = $stats[$id] ?? ['executed' => 0, 'scheduled' => 0];
+            $steps[]            = $step;
+        }
+
+        return $steps;
+    }
+
+    /**
+     * Apply a complete flow to a campaign as a diff, like Mautic's API (PUT):
+     * steps whose key is the ID of an existing step are updated in place and
+     * keep their ID and contact history; new keys create steps; existing
+     * steps that are left out are deleted (optionally redirecting contacts
+     * waiting on them to another step).
+     *
+     * Published campaigns: steps may be added and changed (name, wait,
+     * properties), but not moved; deleting needs $allowDeletions.
      *
      * @param list<array<string, mixed>> $steps
+     * @param array<string, string>      $redirects deleted key => key of the step its waiting contacts continue at
      *
-     * @return list<array<string, mixed>> summary of the created steps
+     * @return array<string, mixed>
      */
-    public function replaceSteps(Campaign $campaign, array $steps): array
+    public function applySteps(Campaign $campaign, array $steps, bool $dryRun = false, bool $allowDeletions = false, array $redirects = []): array
     {
         if ([] === $steps || count($steps) > self::MAX_STEPS) {
             throw new ToolCallException(sprintf('Provide 1 to %d steps.', self::MAX_STEPS));
         }
+        $existing  = $this->liveEvents($campaign);
+        $published = $campaign->isPublished();
 
         // 1. Normalise and check the tree.
         $byKey = [];
         foreach (array_values($steps) as $i => $step) {
+            if (!is_array($step)) {
+                throw new ToolCallException(sprintf('Step %d must be an object.', $i + 1));
+            }
             $key = trim((string) ($step['key'] ?? ''));
             if ('' === $key || isset($byKey[$key])) {
                 throw new ToolCallException(sprintf('Step %d: "key" must be set and unique.', $i + 1));
             }
-            [$eventType, $settings] = $this->settings((string) ($step['type'] ?? ''));
+            $event = ctype_digit($key) ? ($existing[(int) $key] ?? null) : null;
+            if (ctype_digit($key) && null === $event) {
+                throw new ToolCallException(sprintf('Step "%s": there is no step with this ID in the campaign. Use a non-numeric key (e.g. "reminder") for new steps.', $key));
+            }
+            $type = (string) ($step['type'] ?? $event?->getType() ?? '');
+            if (null !== $event && $type !== $event->getType()) {
+                throw new ToolCallException(sprintf('Step "%s": the type of an existing step cannot change (%s -> %s). Remove it and add a new step instead.', $key, $event->getType(), $type));
+            }
+            [$eventType, $settings] = $this->settings($type);
             $parent                 = isset($step['parent']) && '' !== $step['parent'] ? (string) $step['parent'] : null;
             if (null !== $parent && !isset($byKey[$parent])) {
-                throw new ToolCallException(sprintf('Step "%s": parent "%s" must be defined before it.', $key, $parent));
+                throw new ToolCallException(sprintf('Step "%s": parent "%s" must be listed before it.', $key, $parent));
             }
-            $byKey[$key] = $step + ['_i' => $i, '_eventType' => $eventType, '_settings' => $settings, '_parent' => $parent, '_tempId' => 'new'.bin2hex(random_bytes(8))];
+            $byKey[$key] = ['type' => $type] + $step + [
+                '_eventType' => $eventType,
+                '_settings'  => $settings,
+                '_parent'    => $parent,
+                '_event'     => $event,
+                '_id'        => null !== $event ? (string) $event->getId() : 'new'.bin2hex(random_bytes(8)),
+            ];
         }
 
         foreach ($byKey as $key => $step) {
-            $this->checkConnection($key, $step, null !== $step['_parent'] ? $byKey[$step['_parent']] : null);
+            $key = (string) $key; // numeric keys become ints in PHP arrays
+            $parent = null !== $step['_parent'] ? $byKey[$step['_parent']] : null;
+            $this->checkConnection($key, $step, $parent);
+
+            // Running campaigns: contacts are on their way through the tree;
+            // moving steps would change paths under their feet.
+            if ($published && null !== $step['_event']) {
+                $wasParent = $step['_event']->getParent() ? (string) $step['_event']->getParent()->getId() : null;
+                $nowParent = null !== $parent ? $parent['_id'] : null;
+                if ($wasParent !== $nowParent || ($step['_event']->getDecisionPath() ?? null) !== ($step['path'] ?? null)) {
+                    throw new ToolCallException(sprintf('Step "%s": steps of a published campaign cannot be moved (parent/path). Change it in a draft copy, or unpublish first.', $key));
+                }
+            }
         }
 
         // 2. Submit every step through its form (validation as in the UI).
         $eventData = [];
+        $changes   = ['added' => [], 'changed' => [], 'unchanged' => [], 'removed' => []];
         foreach ($byKey as $key => $step) {
-            $eventData[$step['_tempId']] = $this->submitStep($campaign, $key, $step, null !== $step['_parent'] ? $byKey[$step['_parent']] : null);
+            $key = (string) $key; // numeric keys become ints in PHP arrays
+            $parent                      = null !== $step['_parent'] ? $byKey[$step['_parent']] : null;
+            $data                        = $this->submitStep($campaign, $key, $step, $parent);
+            $eventData[$step['_id']]     = $data;
+            if (null === $step['_event']) {
+                $changes['added'][] = ['key' => $key, 'type' => $step['type'], 'name' => $data['name']];
+            } elseif ([] !== ($diff = $this->diff($step['_event'], $data, $parent['_id'] ?? null, $step['path'] ?? null))) {
+                $changes['changed'][] = ['key' => $key, 'name' => $data['name'], 'fields' => $diff];
+            } else {
+                $changes['unchanged'][] = $key;
+            }
         }
 
-        // 3. Canvas: sources, nodes and connections the builder understands.
+        // 3. Deleted steps, their waiting contacts and where they continue.
+        $deleted = [];
+        $stats   = $this->eventStats(array_keys($existing));
+        foreach ($existing as $id => $event) {
+            if (isset($byKey[(string) $id])) {
+                continue;
+            }
+            $redirect = null;
+            if (isset($redirects[(string) $id])) {
+                $target = $byKey[$redirects[(string) $id]] ?? null;
+                if (null === $target || null === $target['_event']) {
+                    throw new ToolCallException(sprintf('Redirect of step %d: "%s" must be an existing step that is kept.', $id, $redirects[(string) $id]));
+                }
+                $redirect = (int) $target['_id'];
+            }
+            $deleted[]             = ['id' => (string) $id, 'redirectEvent' => $redirect];
+            $changes['removed'][]  = [
+                'key'                => (string) $id,
+                'name'               => $event->getName(),
+                'contacts_scheduled' => $stats[$id]['scheduled'] ?? 0,
+                'contacts_executed'  => $stats[$id]['executed'] ?? 0,
+                'redirect_to'        => null !== $redirect ? (string) $redirect : null,
+            ];
+        }
+        $result = [
+            'dry_run'   => $dryRun,
+            'published' => $published,
+            'changes'   => $changes,
+        ];
+        if ($published && $changes['changed'] !== [] && array_sum(array_map(fn ($c) => (int) ($stats[(int) $c['key']]['scheduled'] ?? 0), $changes['changed'])) > 0) {
+            $result['note'] = 'Contacts already scheduled on a changed step keep their scheduled time; the change applies to contacts reaching it from now on.';
+        }
+        if ($dryRun) {
+            return $result;
+        }
+        if ($published && [] !== $deleted && !$allowDeletions) {
+            throw new ToolCallException('This would delete steps of a published campaign: '.json_encode($changes['removed']).'. Check the affected contacts (dry_run) and repeat with allow_deletions=true, optionally with redirects for waiting contacts.');
+        }
+
+        // 4. Canvas: sources, nodes and connections the builder understands.
         $sources = [];
         if ($campaign->getLists()->count() > 0) {
             $sources[] = 'lists';
@@ -141,19 +271,18 @@ class CampaignFlowBuilder
         foreach ($byKey as $step) {
             if (null === $step['_parent']) {
                 foreach ($sources as $source) {
-                    $connections[] = ['sourceId' => $source, 'targetId' => $step['_tempId'], 'anchors' => ['source' => 'leadsource', 'target' => 'top']];
+                    $connections[] = ['sourceId' => $source, 'targetId' => $step['_id'], 'anchors' => ['source' => 'leadsource', 'target' => 'top']];
                 }
                 continue;
             }
             $parent        = $byKey[$step['_parent']];
             $anchor        = 'action' === $parent['_eventType'] ? 'bottom' : (string) $step['path'];
-            $connections[] = ['sourceId' => $parent['_tempId'], 'targetId' => $step['_tempId'], 'anchors' => ['source' => $anchor, 'target' => 'top']];
+            $connections[] = ['sourceId' => $parent['_id'], 'targetId' => $step['_id'], 'anchors' => ['source' => $anchor, 'target' => 'top']];
         }
         $canvas = ['nodes' => $this->layout($byKey, $sources), 'connections' => $connections];
 
-        // 4. Write, as CampaignApiController does, inside one transaction.
-        $deleted = array_map(fn (Event $e): array => ['id' => $e->getId()], array_values(array_filter($campaign->getEvents()->toArray(), fn (Event $e): bool => !$e->isDeleted())));
-        $conn    = $this->em->getConnection();
+        // 5. Write, as CampaignApiController does, inside one transaction.
+        $conn = $this->em->getConnection();
         $conn->beginTransaction();
         try {
             $this->campaigns->setEvents($campaign, $eventData, $canvas, $deleted);
@@ -171,28 +300,145 @@ class CampaignFlowBuilder
             $conn->commit();
         } catch (\Throwable $e) {
             $conn->rollBack();
+            $this->em->clear();
             throw $e instanceof ToolCallException ? $e : new ToolCallException('Saving the campaign steps failed: '.$e->getMessage(), previous: $e);
         }
 
-        $summary = [];
-        foreach ($byKey as $key => $step) {
-            $data      = $eventData[$step['_tempId']];
-            $summary[] = [
-                'key'    => $key,
-                'type'   => $step['type'],
-                'kind'   => $step['_eventType'],
-                'name'   => $data['name'],
-                'parent' => $step['_parent'],
-                'path'   => $step['path'] ?? null,
-                'wait'   => match ($data['triggerMode'] ?? null) {
-                    'interval' => $data['triggerInterval'].' '.$data['triggerIntervalUnit'],
-                    'date'     => $data['triggerDate'] instanceof \DateTimeInterface ? $data['triggerDate']->format(DATE_ATOM) : null,
-                    default    => null,
-                },
-            ];
+        $result['steps'] = $this->currentSteps($campaign);
+
+        return $result;
+    }
+
+    /** @var array<string, list<string>|null> */
+    private array $fieldCache = [];
+
+    /**
+     * Property field names of a step type's form (null: no properties form).
+     * Mautic merges event fields (name, triggerMode, ...) into stored
+     * properties when a step is edited; only these names are real settings.
+     *
+     * @return list<string>|null
+     */
+    private function propertyFields(string $type): ?array
+    {
+        if (!array_key_exists($type, $this->fieldCache)) {
+            try {
+                [$eventType, $settings] = $this->settings($type);
+                $form                   = $this->form($type, $eventType, $settings, []);
+                $this->fieldCache[$type] = $form->has('properties') ? array_map('strval', array_keys($form->get('properties')->all())) : null;
+            } catch (ToolCallException) {
+                $this->fieldCache[$type] = null; // type of a disabled plugin
+            }
         }
 
-        return $summary;
+        return $this->fieldCache[$type];
+    }
+
+    /**
+     * @param array<string, mixed> $properties
+     *
+     * @return array<string, mixed>
+     */
+    private function settingsOf(string $type, array $properties): array
+    {
+        $fields = $this->propertyFields($type);
+
+        return null === $fields ? [] : array_intersect_key($this->cleanProperties($properties), array_flip($fields));
+    }
+
+    /** @return array<int, Event> */
+    private function liveEvents(Campaign $campaign): array
+    {
+        $events = [];
+        foreach ($campaign->getEvents() as $event) {
+            if (!$event->isDeleted() && $event->getId()) {
+                $events[(int) $event->getId()] = $event;
+            }
+        }
+
+        return $events;
+    }
+
+    /**
+     * Contacts per step: executed (history) and scheduled (waiting to run).
+     *
+     * @param list<int> $ids
+     *
+     * @return array<int, array{executed: int, scheduled: int}>
+     */
+    private function eventStats(array $ids): array
+    {
+        if ([] === $ids) {
+            return [];
+        }
+        $prefix = defined('MAUTIC_TABLE_PREFIX') ? (string) MAUTIC_TABLE_PREFIX : '';
+        $rows   = $this->em->getConnection()->fetchAllAssociative(
+            sprintf('SELECT event_id, SUM(is_scheduled = 0) AS executed, SUM(is_scheduled = 1) AS scheduled FROM %scampaign_lead_event_log WHERE event_id IN (?) GROUP BY event_id', $prefix),
+            [$ids],
+            [\Doctrine\DBAL\ArrayParameterType::INTEGER]
+        );
+        $out = [];
+        foreach ($rows as $row) {
+            $out[(int) $row['event_id']] = ['executed' => (int) $row['executed'], 'scheduled' => (int) $row['scheduled']];
+        }
+
+        return $out;
+    }
+
+    /** @return array<string, mixed>|null */
+    private function waitOf(Event $event): ?array
+    {
+        return match ($event->getTriggerMode()) {
+            'interval' => ['interval' => (int) $event->getTriggerInterval(), 'unit' => (string) $event->getTriggerIntervalUnit()],
+            'date'     => $event->getTriggerDate() ? ['at' => $event->getTriggerDate()->format(DATE_ATOM)] : null,
+            default    => null,
+        };
+    }
+
+    /**
+     * @param array<string, mixed> $properties
+     *
+     * @return array<string, mixed>
+     */
+    private function cleanProperties(array $properties): array
+    {
+        // Mautic stores some bookkeeping next to the form values.
+        foreach (['properties', 'settings', 'type', 'eventType', 'anchor', 'anchorEventType', 'campaignId', 'buttons', '_token'] as $internal) {
+            unset($properties[$internal]);
+        }
+
+        return $properties;
+    }
+
+    /**
+     * @param array<string, mixed> $data
+     *
+     * @return list<string>
+     */
+    private function diff(Event $event, array $data, ?string $parentId, ?string $path): array
+    {
+        $fields = [];
+        if ($event->getName() !== $data['name']) {
+            $fields[] = 'name';
+        }
+        $before = $this->waitOf($event);
+        $after  = match ($data['triggerMode'] ?? null) {
+            'interval' => ['interval' => (int) $data['triggerInterval'], 'unit' => (string) $data['triggerIntervalUnit']],
+            'date'     => $data['triggerDate'] instanceof \DateTimeInterface ? ['at' => $data['triggerDate']->format(DATE_ATOM)] : null,
+            default    => null,
+        };
+        if ($before != $after) {
+            $fields[] = 'wait';
+        }
+        if ($this->settingsOf($event->getType(), $event->getProperties()) != $this->settingsOf($event->getType(), (array) ($data['properties'] ?? []))) {
+            $fields[] = 'properties';
+        }
+        $wasParent = $event->getParent() ? (string) $event->getParent()->getId() : null;
+        if ($wasParent !== $parentId || $event->getDecisionPath() !== $path) {
+            $fields[] = 'position';
+        }
+
+        return $fields;
     }
 
     /** @param array<string, mixed>|null $parent */
@@ -234,7 +480,8 @@ class CampaignFlowBuilder
             throw new ToolCallException(sprintf('Step "%s" (%s) cannot follow "%s" (%s).', $key, $step['type'], $parent['key'], $parent['type']));
         }
         // "No" path of a decision = contact did not act: needs a wait.
-        if ('decision' === $parentKind && 'no' === $path && 'decision' !== $kind && empty($step['wait'])) {
+        $hasWait = !empty($step['wait']) || (!array_key_exists('wait', $step) && null !== $step['_event'] && null !== $this->waitOf($step['_event']));
+        if ('decision' === $parentKind && 'no' === $path && 'decision' !== $kind && !$hasWait) {
             throw new ToolCallException(sprintf('Step "%s": on the "no" path of a decision set "wait" (how long to wait for the contact), e.g. {"interval": 3, "unit": "d"}.', $key));
         }
     }
@@ -248,6 +495,8 @@ class CampaignFlowBuilder
     private function submitStep(Campaign $campaign, string $key, array $step, ?array $parent): array
     {
         $kind  = $step['_eventType'];
+        /** @var Event|null $event */
+        $event = $step['_event'];
         $data  = [
             'type'            => $step['type'],
             'eventType'       => $kind,
@@ -255,14 +504,40 @@ class CampaignFlowBuilder
             'anchor'          => $step['path'] ?? ('action' === ($parent['_eventType'] ?? null) ? 'bottom' : 'leadsource'),
             'anchorEventType' => $parent['_eventType'] ?? 'source',
         ];
+        if (null !== $event) {
+            // Existing step: start from its current values, so omitted
+            // fields stay as they are.
+            $data += [
+                'name'                => $event->getName(),
+                'properties'          => $this->settingsOf($event->getType(), $event->getProperties()),
+                'triggerMode'         => $event->getTriggerMode(),
+                'triggerInterval'     => $event->getTriggerInterval(),
+                'triggerIntervalUnit' => $event->getTriggerIntervalUnit(),
+                'triggerDate'         => $event->getTriggerDate(),
+            ];
+        }
         $form = $this->form($step['type'], $kind, $step['_settings'], $data);
 
-        $submit = [
-            'name'       => (string) ($step['name'] ?? ''),
-            'anchor'     => $data['anchor'],
-            'properties' => is_array($step['properties'] ?? null) ? $step['properties'] : [],
-        ];
-        if (in_array($kind, ['action', 'condition'], true)) {
+        $submit = ['anchor' => $data['anchor']];
+        if (array_key_exists('name', $step) || null === $event) {
+            $submit['name'] = (string) ($step['name'] ?? '');
+        }
+        $properties = is_array($step['properties'] ?? null) ? $step['properties'] : [];
+        if ($form->has('properties')) {
+            // Values echoed back from get_campaign that the form does not
+            // know (Mautic bookkeeping) are dropped if unchanged.
+            $stored = null !== $event ? $this->cleanProperties($event->getProperties()) : [];
+            foreach ($properties as $name => $value) {
+                if (!$form->get('properties')->has((string) $name) && array_key_exists($name, $stored) && $stored[$name] == $value) {
+                    unset($properties[$name]);
+                }
+            }
+            $submit['properties'] = $properties;
+        } elseif ([] !== array_diff_key($properties, null !== $event ? $this->cleanProperties($event->getProperties()) : [])) {
+            throw new ToolCallException(sprintf('Step "%s": %s has no properties.', $key, $step['type']));
+        }
+
+        if (in_array($kind, ['action', 'condition'], true) && (array_key_exists('wait', $step) || null === $event)) {
             $wait = is_array($step['wait'] ?? null) ? $step['wait'] : [];
             if (isset($wait['at'])) {
                 $at = date_create_immutable((string) $wait['at']);
@@ -280,13 +555,6 @@ class CampaignFlowBuilder
                 $submit += ['triggerMode' => 'immediate'];
             }
         }
-
-        if (!$form->has('properties')) {
-            if ([] !== $submit['properties']) {
-                throw new ToolCallException(sprintf('Step "%s": %s has no properties.', $key, $step['type']));
-            }
-            unset($submit['properties']);
-        }
         // Only fields this step type's form has (e.g. decisions have no wait).
         $submit = array_filter($submit, fn (string $field): bool => $form->has($field), ARRAY_FILTER_USE_KEY);
 
@@ -301,13 +569,16 @@ class CampaignFlowBuilder
         }
 
         $result = array_merge($data, (array) $form->getData());
+        if ($form->has('properties')) {
+            $result['properties'] = $this->settingsOf($step['type'], (array) ($result['properties'] ?? []));
+        }
         foreach (['anchor', 'anchorEventType', 'campaignId', 'buttons', 'canvasSettings', 'settings'] as $drop) {
             unset($result[$drop]);
         }
         if ('' === trim((string) ($result['name'] ?? ''))) {
             $result['name'] = $this->translator->trans((string) ($step['_settings']['label'] ?? $step['type']));
         }
-        $result['id'] = $step['_tempId'];
+        $result['id'] = $step['_id'];
 
         return $result;
     }
@@ -382,14 +653,15 @@ class CampaignFlowBuilder
     {
         $children = [];
         foreach ($byKey as $key => $step) {
-            $children[$step['_parent'] ?? ''][] = $key;
+            $key = (string) $key; // numeric keys become ints in PHP arrays
+            $children[$step['_parent'] ?? ''][] = (string) $key;
         }
         $x    = [];
         $next = 0;
         $place = function (string $key, int $depth) use (&$place, &$x, &$next, $children): array {
             $xs = [];
             foreach ($children[$key] ?? [] as $child) {
-                $xs[] = $place($child, $depth + 1)[0];
+                $xs[] = $place((string) $child, $depth + 1)[0];
             }
             $x[$key] = [[] === $xs ? $next++ : (min($xs) + max($xs)) / 2, $depth];
 
@@ -397,7 +669,7 @@ class CampaignFlowBuilder
         };
         $rootXs = [];
         foreach ($children[''] ?? [] as $root) {
-            $rootXs[] = $place($root, 1)[0];
+            $rootXs[] = $place((string) $root, 1)[0];
         }
 
         $nodes  = [];
@@ -406,8 +678,9 @@ class CampaignFlowBuilder
             $nodes[] = ['id' => $source, 'positionX' => (string) (int) (100 + ($center + $i) * 320), 'positionY' => '20'];
         }
         foreach ($byKey as $key => $step) {
+            $key = (string) $key; // numeric keys become ints in PHP arrays
             [$col, $depth] = $x[$key];
-            $nodes[]       = ['id' => $step['_tempId'], 'positionX' => (string) (int) (100 + $col * 320), 'positionY' => (string) (20 + $depth * 160)];
+            $nodes[]       = ['id' => $step['_id'], 'positionX' => (string) (int) (100 + $col * 320), 'positionY' => (string) (20 + $depth * 160)];
         }
 
         return $nodes;

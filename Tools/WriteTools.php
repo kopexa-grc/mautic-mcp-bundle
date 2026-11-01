@@ -17,17 +17,13 @@ use Mcp\Server\RequestContext;
 use MauticPlugin\KopexaMcpBundle\Service\CampaignFlowBuilder;
 use MauticPlugin\KopexaMcpBundle\Service\McpUserContext;
 
-const STEPS_SCHEMA = [
-            'type'     => 'array',
-            'minItems' => 1,
-            'maxItems' => 100,
-            'items'    => [
+const STEP_SCHEMA = [
                 'type'                 => 'object',
-                'required'             => ['key', 'type'],
+                'required'             => ['key'],
                 'additionalProperties' => false,
                 'properties'           => [
-                    'key'        => ['type' => 'string', 'description' => 'Your id for this step, used by "parent" of later steps, e.g. "welcome"'],
-                    'type'       => ['type' => 'string', 'description' => 'Step type from list_campaign_step_types, e.g. "email.send", "email.open", "lead.changetags"'],
+                    'key'        => ['type' => 'string', 'description' => 'Existing steps: their ID as returned by get_campaign (keeps the step and its contact history). New steps: any non-numeric id, e.g. "reminder". Used by "parent" of later steps.'],
+                    'type'       => ['type' => 'string', 'description' => 'Step type from list_campaign_step_types, e.g. "email.send", "email.open", "lead.changetags". Required for new steps.'],
                     'name'       => ['type' => 'string', 'description' => 'Name shown in the builder (default: the type label)'],
                     'parent'     => ['type' => 'string', 'description' => 'Key of the step this one follows. Omit for steps that run when a contact enters the campaign. Parents must be listed before their children.'],
                     'path'       => ['type' => 'string', 'enum' => ['yes', 'no'], 'description' => 'Required after a decision or condition: which branch this step is on'],
@@ -43,7 +39,13 @@ const STEPS_SCHEMA = [
                     ],
                     'properties' => ['type' => 'object', 'description' => 'Settings of the step type, see describe_campaign_step_type. For email.send: {"email": <template email id>, "email_type": "marketing"|"transactional"}'],
                 ],
-            ],
+            ];
+
+const STEPS_SCHEMA = [
+            'type'     => 'array',
+            'minItems' => 1,
+            'maxItems' => 100,
+            'items'    => STEP_SCHEMA,
         ];
 
 /**
@@ -258,29 +260,132 @@ class WriteTools
     }
 
     /**
-     * Set the complete flow (steps) of an UNPUBLISHED campaign: actions, decisions, conditions, waits and yes/no branches. Replaces all existing steps. Steps are validated exactly like in Mautic's campaign builder; the result opens there for review. Example: send welcome email; if opened -> add tag; if not opened within 3 days -> send reminder.
+     * Set the complete flow of a campaign: actions, decisions, conditions, waits and yes/no branches. Works as a diff: steps keyed with an existing step ID (from get_campaign) are updated in place and keep their contact history, new keys add steps, existing steps left out are removed. Validated like Mautic's campaign builder. Published (running) campaigns: steps can be added and changed but not moved; removing steps needs allow_deletions after checking a dry_run. Example: send welcome email; if opened -> add points; if not opened within 3 days -> send reminder.
      *
-     * @param int                        $id    Campaign ID (must be unpublished)
-     * @param list<array<string, mixed>> $steps The steps, parents before children
+     * @param int                        $id             Campaign ID
+     * @param list<array<string, mixed>> $steps          The complete flow, parents before children
+     * @param bool                       $dryRun         Only report what would be added, changed and removed (and contacts affected)
+     * @param bool                       $allowDeletions Needed to remove steps from a published campaign
+     * @param array<string, string>      $redirects      For removed steps of a running campaign: removed step ID => step ID where its waiting contacts continue
      *
      * @return array<string, mixed>
      */
-    public function setCampaignSteps(RequestContext $context, int $id, #[Schema(definition: STEPS_SCHEMA)] array $steps): array
+    public function setCampaignSteps(RequestContext $context, int $id, #[Schema(definition: STEPS_SCHEMA)] array $steps, bool $dryRun = false, bool $allowDeletions = false, #[Schema(definition: ['type' => 'object', 'additionalProperties' => ['type' => 'string']])] array $redirects = []): array
+    {
+        return $this->applyFlow($context, $id, fn (): array => $steps, $dryRun, $allowDeletions, $redirects, 'set_steps');
+    }
+
+    /**
+     * Change one step of a campaign (also a running one): its name, wait and/or properties. The step keeps its ID and contact history; omitted fields stay as they are. Contacts already scheduled on the step keep their time.
+     *
+     * @param int                  $campaignId Campaign ID
+     * @param string               $key        Step ID from get_campaign
+     * @param string|null          $name       New name
+     * @param array<string, mixed> $wait       New wait {interval, unit} or {at}; {} = immediately; omit to keep
+     * @param array<string, mixed> $properties Properties to change (others stay)
+     * @param bool                 $dryRun     Only report the change
+     *
+     * @return array<string, mixed>
+     */
+    public function updateCampaignStep(RequestContext $context, int $campaignId, string $key, ?string $name = null, #[Schema(definition: ['type' => 'object', 'properties' => ['interval' => ['type' => 'integer', 'minimum' => 1], 'unit' => ['type' => 'string', 'enum' => ['i', 'h', 'd', 'm', 'y']], 'at' => ['type' => 'string']]])] ?array $wait = null, ?array $properties = null, bool $dryRun = false): array
+    {
+        return $this->applyFlow($context, $campaignId, function (array $current) use ($key, $name, $wait, $properties): array {
+            $found = false;
+            foreach ($current as &$step) {
+                if ($step['key'] !== $key) {
+                    continue;
+                }
+                $found = true;
+                if (null !== $name) {
+                    $step['name'] = $name;
+                }
+                if (null !== $wait) {
+                    $step['wait'] = $wait;
+                } else {
+                    unset($step['wait']); // keep the stored wait
+                }
+                $step['properties'] = array_replace($step['properties'] ?? [], $properties ?? []);
+            }
+            unset($step);
+            if (!$found) {
+                throw new ToolCallException(sprintf('Step "%s" not found in this campaign. Use the step IDs from get_campaign.', $key));
+            }
+
+            return $current;
+        }, $dryRun, false, [], 'update_step');
+    }
+
+    /**
+     * Add one step to a campaign (also a running one), e.g. a reminder on the "no" path of a decision or a follow-up after an email.
+     *
+     * @param int                  $campaignId Campaign ID
+     * @param array<string, mixed> $step       The new step (non-numeric key, type, parent, path, wait, properties)
+     * @param bool                 $dryRun     Only report the change
+     *
+     * @return array<string, mixed>
+     */
+    public function addCampaignStep(RequestContext $context, int $campaignId, #[Schema(definition: STEP_SCHEMA)] array $step, bool $dryRun = false): array
+    {
+        if (ctype_digit((string) ($step['key'] ?? ''))) {
+            throw new ToolCallException('A new step needs a non-numeric key, e.g. "reminder".');
+        }
+
+        return $this->applyFlow($context, $campaignId, fn (array $current): array => [...$current, $step], $dryRun, false, [], 'add_step');
+    }
+
+    /**
+     * Remove one step (that has no following steps) from a campaign. On a running campaign, call it first with dryRun to see how many contacts are scheduled on the step, then with confirm=true; redirectTo moves those contacts to another step.
+     *
+     * @param int         $campaignId Campaign ID
+     * @param string      $key        Step ID from get_campaign
+     * @param string|null $redirectTo Step ID where contacts waiting on the removed step continue
+     * @param bool        $dryRun     Only report the change
+     * @param bool        $confirm    Required to remove a step from a published campaign
+     *
+     * @return array<string, mixed>
+     */
+    public function removeCampaignStep(RequestContext $context, int $campaignId, string $key, ?string $redirectTo = null, bool $dryRun = false, bool $confirm = false): array
+    {
+        return $this->applyFlow($context, $campaignId, function (array $current) use ($key): array {
+            $keys = array_column($current, 'key');
+            if (!in_array($key, $keys, true)) {
+                throw new ToolCallException(sprintf('Step "%s" not found in this campaign.', $key));
+            }
+            $children = array_column(array_filter($current, fn (array $s): bool => ($s['parent'] ?? null) === $key), 'key');
+            if ([] !== $children) {
+                throw new ToolCallException(sprintf('Step "%s" has following steps (%s). Remove those first, or restructure with set_campaign_steps.', $key, implode(', ', $children)));
+            }
+
+            return array_values(array_filter($current, fn (array $s): bool => $s['key'] !== $key));
+        }, $dryRun, $confirm, null !== $redirectTo ? [$key => $redirectTo] : [], 'remove_step');
+    }
+
+    /**
+     * @param \Closure(list<array<string, mixed>>): list<array<string, mixed>> $build current steps => new steps
+     * @param array<string, string>                                          $redirects
+     *
+     * @return array<string, mixed>
+     */
+    private function applyFlow(RequestContext $context, int $id, \Closure $build, bool $dryRun, bool $allowDeletions, array $redirects, string $action): array
     {
         $campaign = $this->campaigns->getEntity($id);
         if (!$campaign instanceof Campaign || !$campaign->getId()) {
             throw new ToolCallException(sprintf('Campaign %d not found.', $id));
         }
         $this->auth->requireEntityAccess($context, $campaign, 'campaign:campaigns', 'edit');
-        if ($campaign->isPublished()) {
-            throw new ToolCallException('Published campaigns cannot be changed via MCP. Unpublish it in Mautic first.');
-        }
+
+        $current = array_map(function (array $s): array {
+            unset($s['kind'], $s['contacts']);
+
+            return $s;
+        }, $this->flow->currentSteps($campaign));
+        $steps = array_values($build($current));
 
         // Emails used by the flow: the user must be allowed to see them, and
         // only template emails can be sent by campaigns.
         foreach ($steps as $step) {
             $emailId = is_array($step) ? ($step['properties']['email'] ?? null) : null;
-            if (null === $emailId || !in_array($step['type'] ?? '', ['email.send', 'email.send.to.user'], true)) {
+            if (null === $emailId || !in_array($step['type'] ?? 'email.send', ['email.send', 'email.send.to.user'], true)) {
                 continue;
             }
             $email = $this->emails->getEntity((int) $emailId);
@@ -293,10 +398,22 @@ class WriteTools
             }
         }
 
-        $summary = $this->flow->replaceSteps($campaign, array_values($steps));
-        $this->auth->audit('campaign', (int) $campaign->getId(), 'set_steps', ['steps' => count($summary)]);
+        $result = $this->flow->applySteps($campaign, $steps, $dryRun, $allowDeletions, $redirects);
+        if (!$dryRun) {
+            $this->auth->audit('campaign', (int) $campaign->getId(), $action, [
+                'published' => $campaign->isPublished(),
+                'added'     => array_column($result['changes']['added'], 'key'),
+                'changed'   => array_column($result['changes']['changed'], 'key'),
+                'removed'   => array_column($result['changes']['removed'], 'key'),
+            ]);
+        }
 
-        return $this->campaignResult($campaign, sprintf('Campaign flow saved with %d steps (campaign stays unpublished). Review it in the campaign builder.', count($summary))) + ['steps' => $summary];
+        $c       = $result['changes'];
+        $summary = sprintf('%d added, %d changed, %d removed, %d unchanged', count($c['added']), count($c['changed']), count($c['removed']), count($c['unchanged']));
+
+        return $this->campaignResult($campaign, $dryRun
+            ? 'Dry run, nothing saved: '.$summary.'.'
+            : 'Campaign flow saved: '.$summary.($campaign->isPublished() ? '. The campaign is running; the changes apply from now on.' : ' (campaign stays unpublished).')) + $result;
     }
 
     /**
