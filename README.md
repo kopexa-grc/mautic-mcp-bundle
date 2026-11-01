@@ -7,7 +7,8 @@ Mautic 7 at `/mcp` (Streamable HTTP). It is built on the official
 Claude, ChatGPT and other MCP clients can:
 
 - read contacts, segments, emails, campaigns and email statistics
-- create and change **unpublished drafts** of emails and campaigns
+- create and change **unpublished drafts** of emails and campaigns,
+  including complete campaign flows (actions, decisions, conditions, waits)
 
 Every call runs with the Mautic permissions of the user who approved the
 client. OAuth 2.1 comes from

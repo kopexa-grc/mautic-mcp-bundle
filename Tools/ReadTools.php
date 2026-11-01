@@ -16,6 +16,7 @@ use Mautic\LeadBundle\Model\ListModel;
 use Mcp\Capability\Attribute\Schema;
 use Mcp\Exception\ToolCallException;
 use Mcp\Server\RequestContext;
+use MauticPlugin\KopexaMcpBundle\Service\CampaignFlowBuilder;
 use MauticPlugin\KopexaMcpBundle\Service\McpUserContext;
 
 /**
@@ -31,6 +32,7 @@ class ReadTools
         private readonly EmailModel $emails,
         private readonly CampaignModel $campaigns,
         private readonly CoreParametersHelper $parameters,
+        private readonly CampaignFlowBuilder $flow,
     ) {
     }
 
@@ -219,6 +221,32 @@ class ReadTools
         }
 
         return $this->campaignSummary($campaign) + ['events' => $events];
+    }
+
+    /**
+     * List the step types available for campaigns: actions (send email, change points, tags, segments, ...), decisions (opened email, clicked link, visited page, ...) and conditions (field value, segment membership, ...). Includes types from installed plugins.
+     *
+     * @return array<string, mixed>
+     */
+    public function listCampaignStepTypes(RequestContext $context): array
+    {
+        $this->auth->require($context, ['campaign:campaigns:viewown', 'campaign:campaigns:viewother', 'campaign:campaigns:create']);
+
+        return $this->flow->stepTypes();
+    }
+
+    /**
+     * Describe one campaign step type: its properties (names, kinds, required, choices), which steps it may follow, and whether it has yes/no paths. Call this before using a type in set_campaign_steps.
+     *
+     * @param string $type Step type, e.g. "email.send", "email.open", "lead.changetags"
+     *
+     * @return array<string, mixed>
+     */
+    public function describeCampaignStepType(RequestContext $context, string $type): array
+    {
+        $this->auth->require($context, ['campaign:campaigns:viewown', 'campaign:campaigns:viewother', 'campaign:campaigns:create']);
+
+        return $this->flow->describe($type);
     }
 
     // -------------------------------------------------------------------------

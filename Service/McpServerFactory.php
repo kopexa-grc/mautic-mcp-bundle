@@ -34,10 +34,10 @@ use Symfony\Component\Cache\Psr16Cache;
  */
 class McpServerFactory
 {
-    public const VERSION = '0.1.0';
+    public const VERSION = '0.2.0';
 
     /** Tools that need the mcp:write scope. */
-    private const WRITE_TOOLS = ['create_email_draft', 'update_email_draft', 'create_campaign_draft', 'update_campaign_draft'];
+    private const WRITE_TOOLS = ['create_email_draft', 'update_email_draft', 'create_campaign_draft', 'update_campaign_draft', 'set_campaign_steps'];
 
     public function __construct(
         private readonly OAuthSettings $oauth,
@@ -125,10 +125,13 @@ class McpServerFactory
             ->addTool([$this->read, 'getEmailStats'], 'get_email_stats', 'Email statistics', null, $ro)
             ->addTool([$this->read, 'listCampaigns'], 'list_campaigns', 'List campaigns', null, $ro)
             ->addTool([$this->read, 'getCampaign'], 'get_campaign', 'Get campaign', null, $ro)
+            ->addTool([$this->read, 'listCampaignStepTypes'], 'list_campaign_step_types', 'Campaign step types', null, $ro)
+            ->addTool([$this->read, 'describeCampaignStepType'], 'describe_campaign_step_type', 'Describe campaign step type', null, $ro)
             ->addTool([$this->write, 'createEmailDraft'], 'create_email_draft', 'Create email draft', null, $rw)
             ->addTool([$this->write, 'updateEmailDraft'], 'update_email_draft', 'Update email draft', null, $rw)
             ->addTool([$this->write, 'createCampaignDraft'], 'create_campaign_draft', 'Create campaign draft', null, $rw)
             ->addTool([$this->write, 'updateCampaignDraft'], 'update_campaign_draft', 'Update campaign draft', null, $rw)
+            ->addTool([$this->write, 'setCampaignSteps'], 'set_campaign_steps', 'Set campaign steps', null, new ToolAnnotations(readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false))
             ->build();
     }
 }

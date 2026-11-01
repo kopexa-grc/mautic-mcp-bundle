@@ -14,7 +14,37 @@ use Mautic\LeadBundle\Model\ListModel;
 use Mcp\Capability\Attribute\Schema;
 use Mcp\Exception\ToolCallException;
 use Mcp\Server\RequestContext;
+use MauticPlugin\KopexaMcpBundle\Service\CampaignFlowBuilder;
 use MauticPlugin\KopexaMcpBundle\Service\McpUserContext;
+
+const STEPS_SCHEMA = [
+            'type'     => 'array',
+            'minItems' => 1,
+            'maxItems' => 100,
+            'items'    => [
+                'type'                 => 'object',
+                'required'             => ['key', 'type'],
+                'additionalProperties' => false,
+                'properties'           => [
+                    'key'        => ['type' => 'string', 'description' => 'Your id for this step, used by "parent" of later steps, e.g. "welcome"'],
+                    'type'       => ['type' => 'string', 'description' => 'Step type from list_campaign_step_types, e.g. "email.send", "email.open", "lead.changetags"'],
+                    'name'       => ['type' => 'string', 'description' => 'Name shown in the builder (default: the type label)'],
+                    'parent'     => ['type' => 'string', 'description' => 'Key of the step this one follows. Omit for steps that run when a contact enters the campaign. Parents must be listed before their children.'],
+                    'path'       => ['type' => 'string', 'enum' => ['yes', 'no'], 'description' => 'Required after a decision or condition: which branch this step is on'],
+                    'wait'       => [
+                        'type'                 => 'object',
+                        'additionalProperties' => false,
+                        'description'          => 'When an action/condition runs, relative to its parent. Omit = immediately. Required on the "no" path of a decision (how long to wait for the contact to act).',
+                        'properties'           => [
+                            'interval' => ['type' => 'integer', 'minimum' => 1],
+                            'unit'     => ['type' => 'string', 'enum' => ['i', 'h', 'd', 'm', 'y'], 'description' => 'i = minutes, h = hours, d = days, m = months, y = years'],
+                            'at'       => ['type' => 'string', 'description' => 'Fixed date-time (ISO 8601) instead of an interval'],
+                        ],
+                    ],
+                    'properties' => ['type' => 'object', 'description' => 'Settings of the step type, see describe_campaign_step_type. For email.send: {"email": <template email id>, "email_type": "marketing"|"transactional"}'],
+                ],
+            ],
+        ];
 
 /**
  * Write tools (scope mcp:write). They only create and change *drafts*:
@@ -29,6 +59,7 @@ class WriteTools
         private readonly ListModel $segments,
         private readonly CampaignModel $campaigns,
         private readonly CoreParametersHelper $parameters,
+        private readonly CampaignFlowBuilder $flow,
     ) {
     }
 
@@ -224,6 +255,48 @@ class WriteTools
         $this->auth->audit('campaign', (int) $campaign->getId(), 'update', ['fields' => $changed]);
 
         return $this->campaignResult($campaign, 'Campaign draft updated ('.implode(', ', $changed ?: ['nothing']).').');
+    }
+
+    /**
+     * Set the complete flow (steps) of an UNPUBLISHED campaign: actions, decisions, conditions, waits and yes/no branches. Replaces all existing steps. Steps are validated exactly like in Mautic's campaign builder; the result opens there for review. Example: send welcome email; if opened -> add tag; if not opened within 3 days -> send reminder.
+     *
+     * @param int                        $id    Campaign ID (must be unpublished)
+     * @param list<array<string, mixed>> $steps The steps, parents before children
+     *
+     * @return array<string, mixed>
+     */
+    public function setCampaignSteps(RequestContext $context, int $id, #[Schema(definition: STEPS_SCHEMA)] array $steps): array
+    {
+        $campaign = $this->campaigns->getEntity($id);
+        if (!$campaign instanceof Campaign || !$campaign->getId()) {
+            throw new ToolCallException(sprintf('Campaign %d not found.', $id));
+        }
+        $this->auth->requireEntityAccess($context, $campaign, 'campaign:campaigns', 'edit');
+        if ($campaign->isPublished()) {
+            throw new ToolCallException('Published campaigns cannot be changed via MCP. Unpublish it in Mautic first.');
+        }
+
+        // Emails used by the flow: the user must be allowed to see them, and
+        // only template emails can be sent by campaigns.
+        foreach ($steps as $step) {
+            $emailId = is_array($step) ? ($step['properties']['email'] ?? null) : null;
+            if (null === $emailId || !in_array($step['type'] ?? '', ['email.send', 'email.send.to.user'], true)) {
+                continue;
+            }
+            $email = $this->emails->getEntity((int) $emailId);
+            if (!$email instanceof Email || !$email->getId()) {
+                throw new ToolCallException(sprintf('Step "%s": email %d not found.', $step['key'] ?? '?', (int) $emailId));
+            }
+            $this->auth->requireEntityAccess($context, $email, 'email:emails', 'view');
+            if ('list' === $email->getEmailType()) {
+                throw new ToolCallException(sprintf('Step "%s": email %d is a segment email; campaigns can only send template emails (create_email_draft type "template").', $step['key'] ?? '?', $email->getId()));
+            }
+        }
+
+        $summary = $this->flow->replaceSteps($campaign, array_values($steps));
+        $this->auth->audit('campaign', (int) $campaign->getId(), 'set_steps', ['steps' => count($summary)]);
+
+        return $this->campaignResult($campaign, sprintf('Campaign flow saved with %d steps (campaign stays unpublished). Review it in the campaign builder.', count($summary))) + ['steps' => $summary];
     }
 
     /**
