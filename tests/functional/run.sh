@@ -62,7 +62,7 @@ again="$(tool "$contacts" upsert_contacts "{\"contacts\":[{\"email\":\"ada@examp
 
 echo "fields, companies, dynamic segments"
 [[ "$(tool "$contacts" create_contact_field '{"label":"CRM ID","alias":"crm_id"}' | jq -r .created)" == true ]] && pass "create_contact_field" || fail "create_contact_field"
-co="$(tool "$contacts" upsert_companies '{"companies":[{"fields":{"companyname":"ACME"}}]}')"
+co="$(tool "$contacts" upsert_companies '{"companies":[{"fields":{"companyname":"Functional Holding"}}]}')"
 [[ "$(jq -r .counts.created <<<"$co")" == 1 ]] && pass "upsert_companies" || { echo "$co"; fail "upsert_companies"; }
 dyn="$(tool "$contacts" create_segment '{"name":"ACME people","filters":[{"field":"company","operator":"=","value":"ACME"}],"dryRun":true}')"
 jq -e '.dry_run == true and (.matching_contacts | type == "number")' <<<"$dyn" >/dev/null && pass "dynamic segment dry run with count" || { echo "$dyn"; fail "dynamic segment"; }
