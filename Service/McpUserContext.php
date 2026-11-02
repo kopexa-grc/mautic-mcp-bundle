@@ -72,6 +72,11 @@ class McpUserContext
         }
     }
 
+    public function hasScope(RequestContext $context, string $scope): bool
+    {
+        return (bool) $context->getAccessToken()?->hasScope($scope);
+    }
+
     public function currentUserId(): int
     {
         return (int) $this->user?->getId();

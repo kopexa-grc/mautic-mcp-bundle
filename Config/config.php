@@ -7,7 +7,7 @@ use MauticPlugin\KopexaMcpBundle\Controller\McpController;
 return [
     'name'        => 'MCP',
     'description' => 'Model Context Protocol server for AI assistants (Claude, ChatGPT). Read access to contacts, segments, emails and campaigns; creates unpublished email and campaign drafts and edits campaign flows, including running campaigns (live changes).',
-    'version'     => '0.3.2',
+    'version'     => '0.4.0',
     'author'      => 'Kopexa',
     'routes'      => [
         'public' => [
@@ -32,5 +32,8 @@ return [
     'parameters' => [
         // Maximum items a list tool returns.
         'kopexa_mcp_page_limit' => 50,
+        // Allow changes to RUNNING (published) campaigns at all. The token
+        // additionally needs the scope mcp:campaigns:live.
+        'kopexa_mcp_live_campaign_edits' => true,
     ],
 ];
