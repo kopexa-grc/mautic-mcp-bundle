@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.5.0](https://github.com/kopexa-grc/mautic-mcp-bundle/compare/v0.4.1...v0.5.0) (2026-11-02)
+
+
+### Features
+
+* contacts and segments: upsert_contacts, create_segment, segment membership, list_contact_fields ([ab9ef82](https://github.com/kopexa-grc/mautic-mcp-bundle/commit/ab9ef829b421618c511fc439d7df47705ea739e5))
+* declare the mcp:* scopes to the authorization server ([5b5c222](https://github.com/kopexa-grc/mautic-mcp-bundle/commit/5b5c222fc649799eb6bd5eaf0fa598291f5705cb))
+
 ## [0.4.1](https://github.com/kopexa-grc/mautic-mcp-bundle/compare/v0.4.0...v0.4.1) (2026-11-02)
 
 
