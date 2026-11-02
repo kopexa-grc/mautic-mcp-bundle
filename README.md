@@ -1,5 +1,7 @@
 # kopexa/mautic-mcp-bundle
 
+[![Packagist](https://img.shields.io/packagist/v/kopexa/mautic-mcp-bundle)](https://packagist.org/packages/kopexa/mautic-mcp-bundle) [![ci](https://github.com/kopexa-grc/mautic-mcp-bundle/actions/workflows/ci.yml/badge.svg)](https://github.com/kopexa-grc/mautic-mcp-bundle/actions/workflows/ci.yml)
+
 [Model Context Protocol](https://modelcontextprotocol.io) server for
 Mautic 7 at `/mcp` (Streamable HTTP). It is built on the official
 [MCP PHP SDK](https://github.com/modelcontextprotocol/php-sdk).
@@ -13,14 +15,7 @@ composer require kopexa/mautic-mcp-bundle
 php bin/console mautic:plugins:reload
 ```
 
-Until the package is on Packagist, add the repository first (both, the MCP bundle needs the OAuth bundle):
-
-```bash
-composer config repositories.mautic-oauth-bundle vcs https://github.com/kopexa-grc/mautic-oauth-bundle
-composer config repositories.mautic-mcp-bundle vcs https://github.com/kopexa-grc/mautic-mcp-bundle
-```
-
-Requires `kopexa/mautic-oauth-bundle` (installed automatically) with a signing key configured, see its README.
+Requires `kopexa/mautic-oauth-bundle` (installed automatically by Composer) with a signing key configured, see its README.
 
 Already included in the hardened Mautic image
 [`ghcr.io/kopexa-grc/mautic`](https://github.com/kopexa-grc/mautic-stack).
