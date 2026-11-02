@@ -28,7 +28,7 @@
         "install-directory-name": "KopexaMcpBundle"
     },
     "require": {
-        "php": "^8.2",
+        "php": "~8.4",
         "mautic/core-lib": "^7.2",
         "kopexa/mautic-oauth-bundle": "^0.2",
         "mcp/sdk": "^0.9",
