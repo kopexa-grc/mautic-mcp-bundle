@@ -13,15 +13,18 @@ composer require kopexa/mautic-mcp-bundle
 php bin/console mautic:plugins:reload
 ```
 
+Until the package is on Packagist, add the repository first (both, the MCP bundle needs the OAuth bundle):
+
+```bash
+composer config repositories.mautic-oauth-bundle vcs https://github.com/kopexa-grc/mautic-oauth-bundle
+composer config repositories.mautic-mcp-bundle vcs https://github.com/kopexa-grc/mautic-mcp-bundle
+```
+
 Requires `kopexa/mautic-oauth-bundle` (installed automatically) with a signing key configured, see its README.
 
 Already included in the hardened Mautic image
 [`ghcr.io/kopexa-grc/mautic`](https://github.com/kopexa-grc/mautic-stack).
 
-> Development happens in
-> [kopexa-grc/mautic-stack](https://github.com/kopexa-grc/mautic-stack/tree/main/image/extensions/mautic-mcp-bundle);
-> the package repository is a read-only mirror. Issues and pull requests
-> go to mautic-stack.
 
 Claude, ChatGPT and other MCP clients can:
 
@@ -34,8 +37,22 @@ Claude, ChatGPT and other MCP clients can:
 
 Every call runs with the Mautic permissions of the user who approved the
 client. OAuth 2.1 comes from
-[kopexa/mautic-oauth-bundle](../mautic-oauth-bundle).
+[kopexa/mautic-oauth-bundle](https://github.com/kopexa-grc/mautic-oauth-bundle).
 
-Setup, tools and permission model: [docs/mcp.md](../../../docs/mcp.md).
+Setup, tools and permission model: [docs/mcp.md](https://github.com/kopexa-grc/mautic-stack/blob/main/docs/mcp.md).
+
+
+## Development
+
+- `bin/check.sh` checks the package (PHP lint, `composer validate`, version
+  consistency). CI runs it on every push and pull request.
+- Integration tests run in
+  [kopexa-grc/mautic-stack](https://github.com/kopexa-grc/mautic-stack): its
+  smoke test installs this package into the Mautic image and exercises it
+  end to end.
+- **Release:** bump `VERSION`, add a `CHANGELOG.md` entry, update the plugin
+  version in `Config/config.php` and `McpServerFactory::VERSION`. On
+  merge to `main`, the release workflow tags `v<VERSION>` and creates the
+  GitHub release; Packagist and mautic-stack's Renovate pick it up.
 
 Apache-2.0 · [Kopexa](https://kopexa.com)

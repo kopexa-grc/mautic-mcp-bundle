@@ -12,11 +12,11 @@
         "claude",
         "chatgpt"
     ],
-    "homepage": "https://github.com/kopexa-grc/mautic-stack/tree/main/image/extensions/mautic-mcp-bundle",
+    "homepage": "https://github.com/kopexa-grc/mautic-mcp-bundle",
     "support": {
-        "issues": "https://github.com/kopexa-grc/mautic-stack/issues",
+        "issues": "https://github.com/kopexa-grc/mautic-mcp-bundle/issues",
         "source": "https://github.com/kopexa-grc/mautic-mcp-bundle",
-        "docs": "https://github.com/kopexa-grc/mautic-stack/tree/main/docs"
+        "security": "https://github.com/kopexa-grc/mautic-mcp-bundle/security/policy"
     },
     "authors": [
         {
