@@ -9,7 +9,10 @@ use Mautic\CampaignBundle\Model\CampaignModel;
 use Mautic\CoreBundle\Helper\CoreParametersHelper;
 use Mautic\EmailBundle\Entity\Email;
 use Mautic\EmailBundle\Model\EmailModel;
+use Mautic\LeadBundle\Entity\Lead;
 use Mautic\LeadBundle\Entity\LeadList;
+use Mautic\LeadBundle\Helper\FakeContactHelper;
+use Mautic\LeadBundle\Model\LeadModel;
 use Mautic\LeadBundle\Model\ListModel;
 use Mcp\Capability\Attribute\Schema;
 use Mcp\Exception\ToolCallException;
@@ -67,6 +70,8 @@ class WriteTools
         private readonly CampaignModel $campaigns,
         private readonly CoreParametersHelper $parameters,
         private readonly CampaignFlowBuilder $flow,
+        private readonly LeadModel $leads,
+        private readonly FakeContactHelper $fakeContact,
     ) {
     }
 
@@ -177,6 +182,47 @@ class WriteTools
         $this->auth->audit('email', (int) $email->getId(), 'update', ['fields' => $changed]);
 
         return $this->emailResult($email, 'Draft updated ('.implode(', ', $changed ?: ['nothing']).').');
+    }
+
+    /**
+     * Send a test of an email to yourself (the signed-in Mautic user, nobody else), like "Send example" in Mautic. Tokens are filled with a sample contact, or with a real contact (previewContactId) you may view. Works for drafts; nothing is published, no statistics are recorded.
+     *
+     * @param int      $id               Email ID
+     * @param int|null $previewContactId Fill tokens such as {contactfield=firstname} with this contact
+     *
+     * @return array<string, mixed>
+     */
+    public function sendTestEmail(RequestContext $context, int $id, ?int $previewContactId = null): array
+    {
+        $email = $this->emails->getEntity($id);
+        if (!$email instanceof Email || !$email->getId()) {
+            throw new ToolCallException(sprintf('Email %d not found.', $id));
+        }
+        $this->auth->requireEntityAccess($context, $email, 'email:emails', 'view');
+        $user    = $this->auth->user($context);
+        $address = (string) $user->getEmail();
+        if (false === filter_var($address, FILTER_VALIDATE_EMAIL)) {
+            throw new ToolCallException('Your Mautic user has no valid email address.');
+        }
+
+        $fields = null;
+        if (null !== $previewContactId) {
+            $lead = $this->leads->getEntity($previewContactId);
+            if (!$lead instanceof Lead || !$lead->getId()) {
+                throw new ToolCallException(sprintf('Contact %d not found.', $previewContactId));
+            }
+            $this->auth->requireEntityAccess($context, $lead, 'lead:leads', 'view');
+            $fields = $this->emails->enrichedContactWithCompanies($this->leads->getRepository()->getLead($previewContactId));
+        }
+        $fields ??= $this->fakeContact->prepareFakeContactWithPrimaryCompany();
+
+        $errors = $this->emails->sendSampleEmailToUser($email, [['id' => '', 'firstname' => (string) $user->getFirstName(), 'lastname' => (string) $user->getLastName(), 'email' => $address]], $fields, [], [], false);
+        if (is_array($errors) && [] !== $errors) {
+            throw new ToolCallException('Mautic could not send the test: '.implode('; ', array_map('strval', $errors)));
+        }
+        $this->auth->audit('email', (int) $email->getId(), 'send_test', ['to' => 'self']);
+
+        return ['id' => $email->getId(), 'sent_to' => $address, 'message' => sprintf('Test of "%s" sent to %s. Check the inbox (and spam folder).', $email->getName(), $address)];
     }
 
     /**

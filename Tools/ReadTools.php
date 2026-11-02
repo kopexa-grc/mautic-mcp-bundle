@@ -78,6 +78,48 @@ class ReadTools
     }
 
     /**
+     * Activity timeline of a contact, newest first: email sends, opens and clicks, page visits, form submissions, points and stage changes, segment and campaign membership, notes and more (everything Mautic shows on the contact's history). Use it to judge engagement, e.g. before handing a lead to sales.
+     *
+     * @param int          $id     Contact ID
+     * @param list<string> $types  Only these event types (see "types" in the result), e.g. ["email.read", "page.hit", "form.submitted"]
+     * @param string       $search Search in the event labels
+     * @param int          $page   Page (25 events each by default)
+     *
+     * @return array<string, mixed>
+     */
+    public function getContactActivity(RequestContext $context, int $id, array $types = [], string $search = '', #[Schema(minimum: 1)] int $page = 1, #[Schema(minimum: 1, maximum: 100)] int $limit = 25): array
+    {
+        $lead = $this->leads->getEntity($id);
+        if (!$lead instanceof Lead || !$lead->getId()) {
+            throw new ToolCallException(sprintf('Contact %d not found.', $id));
+        }
+        $this->auth->requireEntityAccess($context, $lead, 'lead:leads', 'view');
+        $data = $this->leads->getEngagements($lead, ['search' => $search, 'includeEvents' => array_values(array_map('strval', $types)), 'excludeEvents' => []], ['timestamp', 'DESC'], $page, $limit);
+
+        $events = [];
+        foreach ($data['events'] as $e) {
+            $label = $e['eventLabel'] ?? '';
+            $time  = $e['timestamp'] ?? null;
+            $events[] = array_filter([
+                'type'      => $e['event'] ?? null,
+                'type_name' => $e['eventType'] ?? null,
+                'label'     => is_array($label) ? ($label['label'] ?? null) : (string) $label,
+                'link'      => is_array($label) ? ($label['href'] ?? null) : null,
+                'at'        => $time instanceof \DateTimeInterface ? $time->format(DATE_ATOM) : (is_string($time) ? $time : null),
+            ], fn ($v): bool => null !== $v && '' !== $v);
+        }
+
+        return [
+            'contact' => $this->contactSummary($lead),
+            'total'   => (int) $data['total'],
+            'page'    => $page,
+            'pages'   => (int) $data['maxPages'],
+            'types'   => $data['types'],
+            'events'  => $events,
+        ];
+    }
+
+    /**
      * List contact segments with their size.
      *
      * @param string $search Filter by name

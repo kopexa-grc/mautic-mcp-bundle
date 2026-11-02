@@ -25,10 +25,15 @@ Claude, ChatGPT and other MCP clients can:
 
 - read contacts, segments, emails, campaigns and email statistics
 - create **unpublished** emails and campaigns
-- create and update contacts (matched by email, up to 100 per call),
-  create segments and change segment membership, e.g. to sync contacts
-  with a CRM. Adding contacts to a segment can start running campaigns
-  and segment emails for them; results and dry runs report it.
+- create emails in the brand theme from panels and elements (themes with a
+  block library, e.g. Kopexa), editable in Mautic's builder, and send a
+  test to oneself
+- create and update contacts and companies (matched by their unique
+  fields, up to 100 per call), add custom fields, build static and dynamic
+  segments (filters on fields, tags and behaviour), e.g. to sync with a CRM.
+  Adding contacts to a segment can start running campaigns and segment
+  emails for them; results and dry runs report it
+- read a contact's activity (opens, clicks, visits, forms, points)
 - build and edit complete campaign flows (actions, decisions, conditions,
   waits). This also works on **running** campaigns, where changes are live:
   Mautic's scheduler executes them and may send emails. Publishing and

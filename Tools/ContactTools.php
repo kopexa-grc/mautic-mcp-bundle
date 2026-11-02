@@ -9,7 +9,9 @@ use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\ParameterType;
 use Mautic\CoreBundle\Helper\CoreParametersHelper;
 use Mautic\LeadBundle\Entity\Lead;
+use Mautic\LeadBundle\Entity\LeadField;
 use Mautic\LeadBundle\Entity\LeadList;
+use Mautic\LeadBundle\Field\Exception\AbortColumnCreateException;
 use Mautic\LeadBundle\Field\FieldsWithUniqueIdentifier;
 use Mautic\LeadBundle\Model\FieldModel;
 use Mautic\LeadBundle\Model\LeadModel;
@@ -18,6 +20,7 @@ use Mcp\Capability\Attribute\Schema;
 use Mcp\Exception\ToolCallException;
 use Mcp\Server\RequestContext;
 use MauticPlugin\KopexaMcpBundle\Service\McpUserContext;
+use MauticPlugin\KopexaMcpBundle\Service\SegmentEffects;
 
 const CONTACT_SCHEMA = [
     'type'                 => 'object',
@@ -30,8 +33,12 @@ const CONTACT_SCHEMA = [
             'additionalProperties' => ['type' => ['string', 'number', 'boolean', 'null']],
         ],
         'tags'   => ['type' => 'array', 'items' => ['type' => 'string'], 'description' => 'Tags to add; prefix "-" removes a tag, e.g. "-lead"'],
+        'points' => ['type' => 'integer', 'description' => 'Set the points to this value (lead scoring)'],
+        'stage'  => ['type' => 'string', 'description' => 'Move the contact to this stage (name or ID, must exist in Mautic)'],
     ],
 ];
+
+const FIELD_TYPES = ['text', 'textarea', 'number', 'boolean', 'select', 'multiselect', 'date', 'datetime', 'email', 'url', 'tel', 'country', 'region', 'locale', 'timezone'];
 
 /**
  * Contact and segment tools (scope mcp:contacts:write): create and update
@@ -58,20 +65,24 @@ class ContactTools
         private readonly FieldsWithUniqueIdentifier $uniqueFields,
         private readonly Connection $connection,
         private readonly CoreParametersHelper $parameters,
+        private readonly SegmentEffects $effects,
     ) {
     }
 
     /**
-     * List the contact fields of this Mautic (alias, label, type, whether it identifies contacts). Use the aliases in upsert_contacts.
+     * List the fields of contacts or companies (alias, label, type, choices, whether it identifies records). Use the aliases in upsert_contacts / upsert_companies and in segment filters.
+     *
+     * @param string $object "contact" or "company"
      *
      * @return array<string, mixed>
      */
-    public function listContactFields(RequestContext $context): array
+    public function listContactFields(RequestContext $context, #[Schema(enum: ['contact', 'company'])] string $object = 'contact'): array
     {
         $this->auth->require($context, ['lead:leads:viewown', 'lead:leads:viewother']);
-        $unique = $this->uniqueFields->getFieldsWithUniqueIdentifier(['object' => 'lead']);
+        $object = 'company' === $object ? 'company' : 'lead';
+        $unique = $this->uniqueFields->getFieldsWithUniqueIdentifier(['object' => $object]);
         $fields = [];
-        foreach ($this->fields->getFieldListWithProperties('lead') as $alias => $f) {
+        foreach ($this->fields->getFieldListWithProperties($object) as $alias => $f) {
             if (!($f['isPublished'] ?? true)) {
                 continue;
             }
@@ -142,9 +153,21 @@ class ContactTools
                 $inSegments             = $isNew ? [] : $this->memberSegmentIds((int) $lead->getId(), array_map(fn (LeadList $s): int => (int) $s->getId(), $segments));
                 $joins                  = array_values(array_filter($segments, fn (LeadList $s): bool => !in_array((int) $s->getId(), $inSegments, true)));
 
+                $points = isset($row['points']) ? (int) $row['points'] : null;
+                $stage  = isset($row['stage']) && '' !== (string) $row['stage'] ? (string) $row['stage'] : null;
+                if (null !== $points && ($isNew || (int) $lead->getPoints() !== $points)) {
+                    $changed[] = 'points';
+                }
+                if (null !== $stage && ($isNew || !in_array($stage, [(string) $lead->getStage()?->getName(), (string) $lead->getStage()?->getId()], true))) {
+                    $changed[] = 'stage';
+                    $data['stage'] = $stage;
+                }
                 $status = $isNew ? 'created' : ([] === $changed && [] === $tagChanges && [] === $joins ? 'unchanged' : 'updated');
                 if (!$dryRun && 'unchanged' !== $status) {
                     $this->leads->setFieldValues($lead, $data, false, false);
+                    if (null !== $points) {
+                        $lead->setPoints($points);
+                    }
                     if ([] !== $addTags || [] !== $removeTags) {
                         $this->leads->modifyTags($lead, $addTags, $removeTags, false);
                     }
@@ -178,40 +201,93 @@ class ContactTools
             'message' => ($dryRun ? 'Dry run, nothing saved: ' : 'Saved: ').vsprintf('%d created, %d updated, %d unchanged, %d failed.', array_values($counts)),
             'counts'  => $counts,
             'results' => $results,
-        ] + ([] !== $segments ? ['live_effects' => $this->liveEffects($segments)] : []);
+        ] + ([] !== $segments ? ['live_effects' => $this->effects->forSegments($segments)] : []);
     }
 
     /**
-     * Create a segment. Without filters it is a static list: contacts are added with upsert_contacts or add_contacts_to_segment.
+     * Create a custom field for contacts or companies, e.g. to map a CRM field that Mautic does not have yet. If the alias exists, the existing field is returned (no change). Needs the Mautic permission to manage fields. The new column is added to the database right away (or by Mautic's background job if the instance is set up that way).
      *
-     * @param string $name        Segment name
-     * @param string $description What the segment is for
-     * @param string $publicName  Name shown to contacts in the preference center (default: name)
+     * @param string       $label   Label shown in Mautic, e.g. "Deal stage"
+     * @param string       $alias   Field alias (lowercase letters, digits, underscores), e.g. "deal_stage"; default: from the label
+     * @param string       $type    Field type
+     * @param string       $object  "contact" or "company"
+     * @param list<string> $options Choices for select / multiselect
+     * @param bool         $unique  Identifies records (like email); use only for real IDs, e.g. "twenty_id"
      *
      * @return array<string, mixed>
      */
-    public function createSegment(
+    public function createContactField(
         RequestContext $context,
-        #[Schema(minLength: 1, maxLength: 191)] string $name,
-        string $description = '',
-        string $publicName = '',
+        #[Schema(minLength: 1, maxLength: 191)] string $label,
+        string $alias = '',
+        #[Schema(enum: FIELD_TYPES)] string $type = 'text',
+        #[Schema(enum: ['contact', 'company'])] string $object = 'contact',
+        #[Schema(maxItems: 200)] array $options = [],
+        bool $unique = false,
     ): array {
-        $this->auth->require($context, 'lead:lists:create');
-        $segment = new LeadList();
-        $segment->setName($name);
-        $segment->setDescription('' !== $description ? $description : 'Created via MCP.');
-        $segment->setPublicName('' !== $publicName ? $publicName : $name);
-        $segment->setFilters([]);
-        $segment->setIsPublished(true);
-        $this->segments->saveEntity($segment);
-        $this->auth->audit('segment', (int) $segment->getId(), 'create', ['name' => $name]);
+        $this->auth->require($context, 'lead:fields:full');
+        $object = 'company' === $object ? 'company' : 'lead';
+        $alias  = strtolower(trim(preg_replace('/[^a-z0-9_]+/i', '_', '' !== $alias ? $alias : $label) ?? '', '_'));
+        if ('' === $alias || ctype_digit($alias[0])) {
+            throw new ToolCallException('The alias must start with a letter and contain only letters, digits and underscores.');
+        }
+        if (strlen($alias) > 25) {
+            throw new ToolCallException('The alias may have at most 25 characters (it becomes a database column).');
+        }
+        if (!in_array($type, FIELD_TYPES, true)) {
+            throw new ToolCallException(sprintf('Unknown type "%s". Allowed: %s.', $type, implode(', ', FIELD_TYPES)));
+        }
+        $existing = $this->fields->getEntityByAlias($alias);
+        if ($existing instanceof LeadField) {
+            if ($existing->getObject() !== $object) {
+                throw new ToolCallException(sprintf('The alias "%s" is already used by a %s field.', $alias, 'company' === $existing->getObject() ? 'company' : 'contact'));
+            }
+
+            return ['alias' => $alias, 'label' => $existing->getLabel(), 'type' => $existing->getType(), 'object' => 'company' === $object ? 'company' : 'contact', 'created' => false, 'message' => 'The field already exists; nothing changed.'];
+        }
+
+        $field = new LeadField();
+        $field->setLabel($label);
+        $field->setAlias($alias);
+        $field->setType($type);
+        $field->setObject($object);
+        $field->setGroup('core');
+        $field->setIsPublished(true);
+        $field->setIsListable(true);
+        $field->setIsShortVisible(false);
+        $field->setIsUniqueIdentifer($unique);
+        $properties = match ($type) {
+            'select', 'multiselect' => ['list' => array_map(fn ($o): array => ['label' => (string) $o, 'value' => (string) $o], array_values(array_unique($options)))],
+            'boolean'               => ['no' => 'No', 'yes' => 'Yes'],
+            default                 => [],
+        };
+        if (in_array($type, ['select', 'multiselect'], true) && [] === $options) {
+            throw new ToolCallException('select and multiselect fields need "options".');
+        }
+        $valid = $this->fields->setFieldProperties($field, $properties);
+        if (true !== $valid) {
+            throw new ToolCallException('Invalid field properties: '.$valid);
+        }
+
+        $queued = false;
+        try {
+            $this->fields->saveEntity($field);
+        } catch (AbortColumnCreateException) {
+            $queued = true;
+        }
+        $this->fieldList = null;
+        $this->auth->audit('field', (int) $field->getId(), 'create', ['alias' => $alias, 'type' => $type, 'object' => $object]);
 
         return [
-            'id'      => $segment->getId(),
-            'name'    => $segment->getName(),
-            'alias'   => $segment->getAlias(),
-            'message' => 'Segment created (static, no filters). Search its contacts with search_contacts "segment:'.$segment->getAlias().'".',
-            'url'     => $this->adminUrl('/s/segments/view/'.$segment->getId()),
+            'id'      => $field->getId(),
+            'alias'   => $alias,
+            'label'   => $label,
+            'type'    => $type,
+            'object'  => 'company' === $object ? 'company' : 'contact',
+            'created' => true,
+            'message' => $queued
+                ? 'Field created; Mautic adds the database column with its background job (mautic:custom-field:create-column). Values can be written once that has run.'
+                : 'Field created and ready to use.',
         ];
     }
 
@@ -291,42 +367,7 @@ class ContactTools
             'segment'  => ['id' => $segment->getId(), 'name' => $segment->getName()],
             'message'  => sprintf('%s%d contact(s) %s.', $dryRun ? 'Dry run, nothing saved: ' : '', $changed, $add ? 'added' : 'removed'),
             'results'  => $results,
-        ] + ($add ? ['live_effects' => $this->liveEffects([$segment])] : []);
-    }
-
-    /**
-     * What joining these segments sets in motion: running campaigns that use
-     * them (Mautic's scheduler adds new members) and published segment
-     * emails (the broadcast job sends them to members who did not get them).
-     *
-     * @param list<LeadList> $segments
-     *
-     * @return array<string, mixed>
-     */
-    private function liveEffects(array $segments): array
-    {
-        $ids    = array_map(fn (LeadList $s): int => (int) $s->getId(), $segments);
-        $prefix = defined('MAUTIC_TABLE_PREFIX') ? (string) MAUTIC_TABLE_PREFIX : '';
-        $campaigns = $this->connection->fetchAllAssociative(
-            "SELECT DISTINCT c.id, c.name FROM {$prefix}campaigns c JOIN {$prefix}campaign_leadlist_xref x ON x.campaign_id = c.id
-             WHERE x.leadlist_id IN (?) AND c.is_published = 1 AND c.deleted IS NULL ORDER BY c.id",
-            [$ids], [ArrayParameterType::INTEGER]
-        );
-        $emails = $this->connection->fetchAllAssociative(
-            "SELECT DISTINCT e.id, e.name, e.subject FROM {$prefix}emails e JOIN {$prefix}email_list_xref x ON x.email_id = e.id
-             WHERE x.leadlist_id IN (?) AND e.is_published = 1 AND e.email_type = 'list'
-               AND (e.publish_down IS NULL OR e.publish_down > ?) ORDER BY e.id",
-            [$ids, (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format('Y-m-d H:i:s')], [ArrayParameterType::INTEGER, ParameterType::STRING]
-        );
-        $cast = fn (array $rows): array => array_map(fn (array $r): array => ['id' => (int) $r['id']] + $r, $rows);
-
-        return [
-            'running_campaigns'        => $cast($campaigns),
-            'published_segment_emails' => $cast($emails),
-            'note'                     => [] === $campaigns && [] === $emails
-                ? 'No running campaign or published segment email uses these segments.'
-                : 'New members enter these campaigns with the next campaign run and get these segment emails with the next broadcast run (cron), unless they are Do-Not-Contact.',
-        ];
+        ] + ($add ? ['live_effects' => $this->effects->forSegments([$segment])] : []);
     }
 
     /**
