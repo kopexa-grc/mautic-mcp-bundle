@@ -3,7 +3,8 @@
   "extends": [
     "config:recommended",
     "helpers:pinGitHubActionDigests",
-    ":semanticCommits"
+    ":semanticCommits",
+    "schedule:monthly"
   ],
   "labels": [
     "dependencies"
@@ -32,5 +33,15 @@
         "pinDigest"
       ]
     }
-  ]
+  ],
+  "timezone": "Europe/Berlin",
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "schedule": [
+      "at any time"
+    ],
+    "labels": [
+      "security"
+    ]
+  }
 }
