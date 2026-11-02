@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.1](https://github.com/kopexa-grc/mautic-mcp-bundle/compare/v0.4.0...v0.4.1) (2026-11-02)
+
+
+### Bug fixes
+
+* require Mautic ^7.2, the versions this plugin is tested with ([5a077bd](https://github.com/kopexa-grc/mautic-mcp-bundle/commit/5a077bd0b289f4bab79ae6eb595b4e57f0e9e9f2))
+* require PHP ~8.4, the versions this plugin is tested on ([16697bd](https://github.com/kopexa-grc/mautic-mcp-bundle/commit/16697bd4b0bea09b823147dfdef58db485f85715))
+
 ## 0.4.0 – 2026-11-02
 
 - Changes to running campaigns need the scope `mcp:campaigns:live` (granted per client on the consent page, opt-in).
