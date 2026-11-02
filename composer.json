@@ -30,7 +30,7 @@
     "require": {
         "php": "~8.4",
         "mautic/core-lib": "^7.2",
-        "kopexa/mautic-oauth-bundle": "^0.3",
+        "kopexa/mautic-oauth-bundle": "^0.4",
         "mcp/sdk": "^0.9",
         "firebase/php-jwt": "^7.0",
         "guzzlehttp/psr7": "^2.7",

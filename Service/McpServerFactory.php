@@ -63,7 +63,7 @@ class McpServerFactory
         return new ProtectedResourceMetadata(
             resource: $this->oauth->resource(),
             authorizationServers: [$this->oauth->issuer()],
-            scopesSupported: array_keys($this->oauth->scopes()),
+            scopesSupported: [McpScopes::READ, McpScopes::WRITE, McpScopes::CONTACTS_WRITE, McpScopes::CAMPAIGNS_LIVE],
             resourceName: 'Mautic',
             resourceDocumentation: 'https://github.com/kopexa-grc/mautic-stack/blob/main/docs/mcp.md',
         );
@@ -84,8 +84,8 @@ class McpServerFactory
             leeway: 30,
         );
         $scopes = new ScopePolicy(
-            default: ['mcp:read'],
-            tools: array_fill_keys(self::WRITE_TOOLS, ['mcp:write']) + array_fill_keys(self::CONTACT_TOOLS, ['mcp:contacts:write']),
+            default: [McpScopes::READ],
+            tools: array_fill_keys(self::WRITE_TOOLS, [McpScopes::WRITE]) + array_fill_keys(self::CONTACT_TOOLS, [McpScopes::CONTACTS_WRITE]),
         );
 
         return new StreamableHttpTransport(
