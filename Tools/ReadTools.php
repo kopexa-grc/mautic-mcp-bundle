@@ -37,20 +37,21 @@ class ReadTools
     }
 
     /**
-     * Search contacts by name, email, company or Mautic search syntax (e.g. "tag:customer", "segment:newsletter").
+     * Search contacts by name, email, company or Mautic search syntax (e.g. "tag:customer", "segment:newsletter"). With includeFields every contact carries all filled profile fields (for exports to other systems).
      *
-     * @param string $search Search term or Mautic search expression
-     * @param int    $limit  Maximum number of contacts
-     * @param int    $offset Number of contacts to skip (pagination)
+     * @param string $search        Search term or Mautic search expression
+     * @param int    $limit         Maximum number of contacts
+     * @param int    $offset        Number of contacts to skip (pagination)
+     * @param bool   $includeFields Include all filled profile fields
      *
      * @return array<string, mixed>
      */
-    public function searchContacts(RequestContext $context, string $search = '', #[Schema(minimum: 1, maximum: 100)] int $limit = 20, #[Schema(minimum: 0)] int $offset = 0): array
+    public function searchContacts(RequestContext $context, string $search = '', #[Schema(minimum: 1, maximum: 100)] int $limit = 20, #[Schema(minimum: 0)] int $offset = 0, bool $includeFields = false): array
     {
         $this->auth->require($context, ['lead:leads:viewown', 'lead:leads:viewother']);
         [$items, $total] = $this->list($this->leads, 'lead:leads', 'l', $search, $limit, $offset);
 
-        return ['total' => $total, 'contacts' => array_map(fn (Lead $l): array => $this->contactSummary($l), $items)];
+        return ['total' => $total, 'contacts' => array_map(fn (Lead $l): array => $this->contactSummary($l) + ($includeFields ? ['fields' => $this->profileFields($l)] : []), $items)];
     }
 
     /**
@@ -68,15 +69,8 @@ class ReadTools
         }
         $this->auth->requireEntityAccess($context, $lead, 'lead:leads', 'view');
 
-        $fields = [];
-        foreach ($lead->getProfileFields() as $alias => $value) {
-            if (null !== $value && '' !== $value && !in_array($alias, ['id'], true)) {
-                $fields[$alias] = $value;
-            }
-        }
-
         return $this->contactSummary($lead) + [
-            'fields'          => $fields,
+            'fields'          => $this->profileFields($lead),
             'segments'        => array_values(array_map(fn (LeadList $s): array => ['id' => $s->getId(), 'name' => $s->getName()], $this->leads->getLists($lead))),
             'do_not_contact'  => array_values(array_map(fn ($d): array => ['channel' => $d->getChannel(), 'reason' => [1 => 'unsubscribed', 2 => 'bounced', 3 => 'manual'][$d->getReason()] ?? $d->getReason(), 'date' => $d->getDateAdded()?->format(DATE_ATOM)], $lead->getDoNotContact()->toArray())),
             'date_identified' => $lead->getDateIdentified()?->format(DATE_ATOM),
@@ -292,6 +286,19 @@ class ReadTools
             'tags'        => array_values(array_map(fn ($t): string => $t->getTag(), $lead->getTags()->toArray())),
             'last_active' => $lead->getLastActive()?->format(DATE_ATOM),
         ];
+    }
+
+    /** @return array<string, mixed> */
+    private function profileFields(Lead $lead): array
+    {
+        $fields = [];
+        foreach ($lead->getProfileFields() as $alias => $value) {
+            if (null !== $value && '' !== $value && !in_array($alias, ['id'], true)) {
+                $fields[$alias] = $value;
+            }
+        }
+
+        return $fields;
     }
 
     /** @return array<string, mixed> */

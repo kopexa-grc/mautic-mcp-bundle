@@ -45,4 +45,18 @@ mcp_init "$live"
 ok="$(tool "$live" update_campaign_step "{\"campaignId\":$camp,\"key\":\"$reminder\",\"wait\":{\"interval\":5,\"unit\":\"d\"}}")"
 jq -e --arg k "$reminder" '([.steps[] | select(.key == $k) | .wait] == [{"interval": 5, "unit": "d"}]) and .live_effects.save_allowed == true' <<<"$ok" >/dev/null \
   && pass "with the scope: running campaign edited in place (live_effects)" || { echo "$ok" | head -c 800; fail "live edit"; }
+
+echo "contacts and segments"
+contacts="$(access_token 'mcp:read mcp:contacts:write')"
+mcp_init "$contacts"
+seg="$(tool "$contacts" create_segment '{"name":"From CRM"}')"; csid="$(jq -r .id <<<"$seg")"
+dry="$(tool "$contacts" upsert_contacts "{\"contacts\":[{\"email\":\"ada@example.com\",\"fields\":{\"firstname\":\"Ada\",\"company\":\"ACME\"},\"tags\":[\"crm\"]}],\"segmentIds\":[$sid],\"dryRun\":true}")"
+jq -e --argjson c "$camp" '.counts.created == 1 and ([.live_effects.running_campaigns[].id] | index($c) != null)' <<<"$dry" >/dev/null \
+  && pass "upsert_contacts dryRun reports the running campaign of the segment" || { echo "$dry" | head -c 800; fail "upsert dryRun"; }
+up="$(tool "$contacts" upsert_contacts "{\"contacts\":[{\"email\":\"ada@example.com\",\"fields\":{\"firstname\":\"Ada\",\"company\":\"ACME\"},\"tags\":[\"crm\"]}],\"segmentIds\":[$csid]}")"
+again="$(tool "$contacts" upsert_contacts "{\"contacts\":[{\"email\":\"ada@example.com\",\"fields\":{\"company\":\"ACME\"}}]}")"
+[[ "$(jq -r '.counts.created' <<<"$up")/$(jq -r '.counts.unchanged' <<<"$again")" == 1/1 ]] \
+  && [[ "$(api "$BASE/api/contacts?search=segment:$(jq -r .alias <<<"$seg")" | jq -r .total)" == 1 ]] \
+  && pass "upsert_contacts creates, is idempotent, adds to the segment" || { echo "$up $again" | head -c 800; fail "upsert"; }
+[[ "$(tool "$write" upsert_contacts '{"contacts":[{"email":"x@example.com"}]}')" != *counts* ]] && pass "contact tools need mcp:contacts:write" || fail "contacts scope"
 echo "all MCP checks passed"

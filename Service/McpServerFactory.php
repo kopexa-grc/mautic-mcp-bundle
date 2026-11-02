@@ -18,6 +18,7 @@ use Mcp\Server\Transport\Http\OAuth\JwtTokenValidator;
 use Mcp\Server\Transport\Http\OAuth\ProtectedResourceMetadata;
 use Mcp\Server\Transport\Http\OAuth\ScopePolicy;
 use Mcp\Server\Transport\StreamableHttpTransport;
+use MauticPlugin\KopexaMcpBundle\Tools\ContactTools;
 use MauticPlugin\KopexaMcpBundle\Tools\ReadTools;
 use MauticPlugin\KopexaMcpBundle\Tools\WriteTools;
 use MauticPlugin\KopexaOAuthBundle\Service\Settings as OAuthSettings;
@@ -39,10 +40,14 @@ class McpServerFactory
     /** Tools that need the mcp:write scope. */
     private const WRITE_TOOLS = ['create_email_draft', 'update_email_draft', 'create_campaign_draft', 'update_campaign_draft', 'set_campaign_steps', 'update_campaign_step', 'add_campaign_step', 'remove_campaign_step'];
 
+    /** Tools that need the mcp:contacts:write scope. */
+    private const CONTACT_TOOLS = ['upsert_contacts', 'create_segment', 'add_contacts_to_segment', 'remove_contacts_from_segment'];
+
     public function __construct(
         private readonly OAuthSettings $oauth,
         private readonly ReadTools $read,
         private readonly WriteTools $write,
+        private readonly ContactTools $contacts,
         private readonly Connection $connection,
         private readonly LoggerInterface $logger,
     ) {
@@ -80,7 +85,7 @@ class McpServerFactory
         );
         $scopes = new ScopePolicy(
             default: ['mcp:read'],
-            tools: array_fill_keys(self::WRITE_TOOLS, ['mcp:write']),
+            tools: array_fill_keys(self::WRITE_TOOLS, ['mcp:write']) + array_fill_keys(self::CONTACT_TOOLS, ['mcp:contacts:write']),
         );
 
         return new StreamableHttpTransport(
@@ -111,6 +116,8 @@ class McpServerFactory
             ->setServerInfo('Mautic', self::VERSION, 'Mautic marketing automation (Kopexa build)', websiteUrl: $this->oauth->issuer(), title: 'Mautic')
             ->setInstructions(implode("\n", [
                 'Mautic marketing automation. Read contacts, segments, emails, campaigns and email statistics.',
+                'Contacts and segments (scope mcp:contacts:write): upsert_contacts creates or updates contacts matched by email (up to 100 per call; use the field aliases of list_contact_fields), create_segment, add/remove_contacts_to/from_segment. Contacts that join a segment can enter running campaigns and receive published segment emails of it: when segments are involved, call with dryRun first, show the user live_effects and save only after they confirm. Never change contacts the user did not ask for; Do-Not-Contact is never changed.',
+                'For exports to other systems, search_contacts with includeFields returns all profile fields; paginate with limit/offset.',
                 'Emails and new campaigns are created unpublished; publishing them and sending stay with a person in Mautic.',
                 'Exception: flows of RUNNING (published) campaigns can be edited (set_campaign_steps, update/add/remove_campaign_step) if the instance allows it and the user granted the scope mcp:campaigns:live. Such changes are live: Mautic\'s scheduler executes them for the contacts in the campaign and can send emails. Always call with dryRun first, show the user live_effects (outbound steps, contacts in the campaign, save_allowed) and save only after they confirm.',
                 'Every call runs with the Mautic permissions of the signed-in user.',
@@ -128,6 +135,11 @@ class McpServerFactory
             ->addTool([$this->read, 'getCampaign'], 'get_campaign', 'Get campaign', null, $ro)
             ->addTool([$this->read, 'listCampaignStepTypes'], 'list_campaign_step_types', 'Campaign step types', null, $ro)
             ->addTool([$this->read, 'describeCampaignStepType'], 'describe_campaign_step_type', 'Describe campaign step type', null, $ro)
+            ->addTool([$this->contacts, 'listContactFields'], 'list_contact_fields', 'List contact fields', null, $ro)
+            ->addTool([$this->contacts, 'upsertContacts'], 'upsert_contacts', 'Create or update contacts', null, new ToolAnnotations(readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false))
+            ->addTool([$this->contacts, 'createSegment'], 'create_segment', 'Create segment', null, $rw)
+            ->addTool([$this->contacts, 'addContactsToSegment'], 'add_contacts_to_segment', 'Add contacts to segment', null, new ToolAnnotations(readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false))
+            ->addTool([$this->contacts, 'removeContactsFromSegment'], 'remove_contacts_from_segment', 'Remove contacts from segment', null, new ToolAnnotations(readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false))
             ->addTool([$this->write, 'createEmailDraft'], 'create_email_draft', 'Create email draft', null, $rw)
             ->addTool([$this->write, 'updateEmailDraft'], 'update_email_draft', 'Update email draft', null, $rw)
             ->addTool([$this->write, 'createCampaignDraft'], 'create_campaign_draft', 'Create campaign draft', null, $rw)

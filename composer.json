@@ -1,6 +1,6 @@
 {
     "name": "kopexa/mautic-mcp-bundle",
-    "description": "Model Context Protocol (MCP) server for Mautic: lets Claude, ChatGPT and other MCP clients read contacts, segments, emails and campaigns and write email and campaign drafts, with the user's Mautic permissions. OAuth 2.1 via kopexa/mautic-oauth-bundle.",
+    "description": "Model Context Protocol (MCP) server for Mautic: lets Claude, ChatGPT and other MCP clients read contacts, segments, emails and campaigns, write email and campaign drafts, create and update contacts and segments, with the user's Mautic permissions. OAuth 2.1 via kopexa/mautic-oauth-bundle.",
     "type": "mautic-plugin",
     "license": "Apache-2.0",
     "keywords": [
@@ -30,7 +30,7 @@
     "require": {
         "php": "~8.4",
         "mautic/core-lib": "^7.2",
-        "kopexa/mautic-oauth-bundle": "^0.2",
+        "kopexa/mautic-oauth-bundle": "^0.3",
         "mcp/sdk": "^0.9",
         "firebase/php-jwt": "^7.0",
         "guzzlehttp/psr7": "^2.7",
