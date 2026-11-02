@@ -14,7 +14,7 @@ version="$(tr -d '[:space:]' < VERSION)"
 [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || err "VERSION '$version' is not x.y.z"
 php -r 'exit(array_key_exists("version", json_decode(file_get_contents("composer.json"), true)) ? 1 : 0);' \
   || err 'composer.json must not contain "version" (Packagist takes it from git tags)'
-grep -q "^## $version " CHANGELOG.md || err "CHANGELOG.md has no entry '## $version …'"
+grep -qE "^## \[?${version//./\\.}[] ]" CHANGELOG.md || err "CHANGELOG.md has no entry for $version"
 # shellcheck disable=SC2016  # PHP code, not shell
 plugin="$(php -r '$c = require "Config/config.php"; echo $c["version"] ?? "";')"
 [[ "$plugin" == "$version" ]] || err "Config/config.php version '$plugin' != VERSION '$version'"

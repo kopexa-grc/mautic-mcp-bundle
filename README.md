@@ -50,9 +50,15 @@ Setup, tools and permission model: [docs/mcp.md](https://github.com/kopexa-grc/m
   [kopexa-grc/mautic-stack](https://github.com/kopexa-grc/mautic-stack): its
   smoke test installs this package into the Mautic image and exercises it
   end to end.
-- **Release:** bump `VERSION`, add a `CHANGELOG.md` entry, update the plugin
-  version in `Config/config.php` and `McpServerFactory::VERSION`. On
-  merge to `main`, the release workflow tags `v<VERSION>` and creates the
-  GitHub release; Packagist and mautic-stack's Renovate pick it up.
+- **Commits** follow [Conventional Commits](https://www.conventionalcommits.org)
+  (`feat:`, `fix:`, `docs:`, `chore:` …); they drive versions and the changelog.
+- **Releases** are automated with
+  [release-please](https://github.com/googleapis/release-please): it keeps a
+  release PR open that bumps `VERSION`, the plugin version and `McpServerFactory::VERSION` and
+  `CHANGELOG.md`. Merging it tags `v<version>` and creates the GitHub
+  release. Packagist and mautic-stack's Renovate pick the tag up.
+- **Dependencies** are kept current by Renovate. Composer constraint updates
+  are committed as `fix(deps):` and so lead to a patch release; CI-only
+  updates (`ci:`) do not.
 
 Apache-2.0 · [Kopexa](https://kopexa.com)

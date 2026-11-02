@@ -4,3 +4,5 @@
 /bin export-ignore
 /SECURITY.md export-ignore
 /renovate.json export-ignore
+/release-please-config.json export-ignore
+/.release-please-manifest.json export-ignore

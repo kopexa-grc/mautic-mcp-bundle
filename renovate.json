@@ -8,5 +8,29 @@
   "labels": [
     "dependencies"
   ],
-  "rangeStrategy": "widen"
+  "rangeStrategy": "widen",
+  "packageRules": [
+    {
+      "description": "Composer constraint changes reach users: release them (fix:)",
+      "matchManagers": [
+        "composer"
+      ],
+      "semanticCommitType": "fix",
+      "semanticCommitScope": "deps"
+    },
+    {
+      "description": "CI-only updates: no release",
+      "matchManagers": [
+        "github-actions"
+      ],
+      "semanticCommitType": "ci",
+      "automerge": true,
+      "matchUpdateTypes": [
+        "minor",
+        "patch",
+        "digest",
+        "pinDigest"
+      ]
+    }
+  ]
 }

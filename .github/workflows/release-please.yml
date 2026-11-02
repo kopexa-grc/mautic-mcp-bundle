@@ -1,0 +1,25 @@
+name: release-please
+
+# Conventional commits on main -> release-please keeps a release PR open
+# (VERSION, CHANGELOG.md, plugin version). Merging it tags v<version> and
+# creates the GitHub release; Packagist and mautic-stack's Renovate pick it up.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release-please:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4.4.1
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
