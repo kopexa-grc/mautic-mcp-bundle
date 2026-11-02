@@ -384,7 +384,7 @@ class WriteTools
         // Emails used by the flow: the user must be allowed to see them, and
         // only template emails can be sent by campaigns.
         foreach ($steps as $step) {
-            $emailId = is_array($step) ? ($step['properties']['email'] ?? null) : null;
+            $emailId = is_array($step) ? ($step['properties']['email'] ?? $step['properties']['useremail']['email'] ?? null) : null;
             if (null === $emailId || !in_array($step['type'] ?? 'email.send', ['email.send', 'email.send.to.user'], true)) {
                 continue;
             }

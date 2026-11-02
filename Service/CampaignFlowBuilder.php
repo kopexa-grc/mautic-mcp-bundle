@@ -11,6 +11,8 @@ use Mautic\CampaignBundle\EventCollector\EventCollector;
 use Mautic\CampaignBundle\Form\Type\EventType;
 use Mautic\CampaignBundle\Model\CampaignModel;
 use Mautic\CampaignBundle\Model\EventModel;
+use Mautic\LeadBundle\Entity\Tag;
+use Mautic\LeadBundle\Model\TagModel;
 use Mcp\Exception\ToolCallException;
 use Symfony\Component\Form\FormFactoryInterface;
 use Symfony\Component\Form\FormInterface;
@@ -42,6 +44,7 @@ class CampaignFlowBuilder
         private readonly EventModel $events,
         private readonly ValidatorInterface $validator,
         private readonly EntityManagerInterface $em,
+        private readonly TagModel $tags,
     ) {
     }
 
@@ -119,7 +122,7 @@ class CampaignFlowBuilder
                 $step['wait'] = $wait;
             }
             // Empty properties are left out: PHP would encode them as [] (not {}).
-            if ([] !== ($properties = $this->settingsOf($event->getType(), $event->getProperties()))) {
+            if ([] !== ($properties = $this->tagIdsToNames($event->getType(), $this->settingsOf($event->getType(), $event->getProperties())))) {
                 $step['properties'] = $properties;
             }
             $step['contacts']   = $stats[$id] ?? ['executed' => 0, 'scheduled' => 0];
@@ -149,8 +152,10 @@ class CampaignFlowBuilder
         if ([] === $steps || count($steps) > self::MAX_STEPS) {
             throw new ToolCallException(sprintf('Provide 1 to %d steps.', self::MAX_STEPS));
         }
-        $existing  = $this->liveEvents($campaign);
-        $published = $campaign->isPublished();
+        $existing           = $this->liveEvents($campaign);
+        $published          = $campaign->isPublished();
+        $this->dryRun       = $dryRun;
+        $this->tagsToCreate = [];
 
         // 1. Normalise and check the tree.
         $byKey = [];
@@ -249,6 +254,9 @@ class CampaignFlowBuilder
         if ($published && $changes['changed'] !== [] && array_sum(array_map(fn ($c) => (int) ($stats[(int) $c['key']]['scheduled'] ?? 0), $changes['changed'])) > 0) {
             $result['note'] = 'Contacts already scheduled on a changed step keep their scheduled time; the change applies to contacts reaching it from now on.';
         }
+        if ([] !== $this->tagsToCreate) {
+            $result['tags_to_create'] = array_values(array_unique($this->tagsToCreate));
+        }
         if ($dryRun) {
             return $result;
         }
@@ -311,6 +319,108 @@ class CampaignFlowBuilder
 
     /** @var array<string, list<string>|null> */
     private array $fieldCache = [];
+
+    /** @var array<string, list<string>> */
+    private array $tagFieldCache = [];
+
+    private bool $dryRun = false;
+
+    /** @var list<string> */
+    private array $tagsToCreate = [];
+
+    /**
+     * Tag fields (Mautic's lead_tag type) of a step type's properties form.
+     * The form takes tag IDs and stores tag names. The builder's widget
+     * creates missing tags while typing; here names are accepted, resolved
+     * to IDs for the form, and missing tags created the same way.
+     *
+     * @return list<string>
+     */
+    private function tagFields(string $type): array
+    {
+        if (!isset($this->tagFieldCache[$type])) {
+            $this->tagFieldCache[$type] = [];
+            try {
+                [$eventType, $settings] = $this->settings($type);
+                $form                   = $this->form($type, $eventType, $settings, []);
+                if ($form->has('properties')) {
+                    foreach ($form->get('properties') as $name => $child) {
+                        if ('lead_tag' === $child->getConfig()->getType()->getBlockPrefix()) {
+                            $this->tagFieldCache[$type][] = (string) $name;
+                        }
+                    }
+                }
+            } catch (ToolCallException) {
+            }
+        }
+
+        return $this->tagFieldCache[$type];
+    }
+
+    /**
+     * @param array<string, mixed> $properties
+     *
+     * @return array<string, mixed>
+     */
+    private function tagNamesToIds(string $type, array $properties): array
+    {
+        foreach ($this->tagFields($type) as $field) {
+            if (!isset($properties[$field])) {
+                continue;
+            }
+            $ids = [];
+            foreach ((array) $properties[$field] as $value) {
+                if (is_int($value) || ctype_digit((string) $value)) {
+                    $ids[] = (int) $value;
+                    continue;
+                }
+                $name = trim((string) $value);
+                if ('' === $name) {
+                    continue;
+                }
+                $existing = $this->em->getRepository(Tag::class)->findOneBy(['tag' => $name]);
+                if ($existing instanceof Tag) {
+                    $ids[] = (int) $existing->getId();
+                } elseif ($this->dryRun) {
+                    $this->tagsToCreate[] = $name;
+                } else {
+                    $tag = $this->tags->getRepository()->getTagByNameOrCreateNewOne($name);
+                    $this->tags->getRepository()->saveEntity($tag);
+                    $ids[] = (int) $tag->getId();
+                }
+            }
+            $properties[$field] = array_values(array_unique($ids));
+        }
+
+        return $properties;
+    }
+
+    /**
+     * @param array<string, mixed> $properties
+     *
+     * @return array<string, mixed>
+     */
+    private function tagIdsToNames(string $type, array $properties): array
+    {
+        foreach ($this->tagFields($type) as $field) {
+            if (!empty($properties[$field]) && is_array($properties[$field])) {
+                // Mautic stores tag names (TagEntityModelTransformer); map
+                // any numeric IDs from older data as well.
+                $names = [];
+                foreach ($properties[$field] as $value) {
+                    if (is_int($value) || ctype_digit((string) $value)) {
+                        $tag     = $this->em->getRepository(Tag::class)->find((int) $value);
+                        $names[] = $tag instanceof Tag ? (string) $tag->getTag() : (string) $value;
+                    } else {
+                        $names[] = (string) $value;
+                    }
+                }
+                $properties[$field] = $names;
+            }
+        }
+
+        return $properties;
+    }
 
     /**
      * Property field names of a step type's form (null: no properties form).
@@ -522,7 +632,7 @@ class CampaignFlowBuilder
         if (array_key_exists('name', $step) || null === $event) {
             $submit['name'] = (string) ($step['name'] ?? '');
         }
-        $properties = is_array($step['properties'] ?? null) ? $step['properties'] : [];
+        $properties = $this->tagNamesToIds($step['type'], is_array($step['properties'] ?? null) ? $step['properties'] : []);
         if ($form->has('properties')) {
             // Values echoed back from get_campaign that the form does not
             // know (Mautic bookkeeping) are dropped if unchanged.
@@ -554,6 +664,12 @@ class CampaignFlowBuilder
             } else {
                 $submit += ['triggerMode' => 'immediate'];
             }
+            // Like the builder, always post interval fields (defaults 1 d);
+            // some handlers read them even for immediate steps.
+            $submit += [
+                'triggerInterval'     => (int) ($data['triggerInterval'] ?? 0) ?: 1,
+                'triggerIntervalUnit' => (string) ($data['triggerIntervalUnit'] ?? '') ?: 'd',
+            ];
         }
         // Only fields this step type's form has (e.g. decisions have no wait).
         $submit = array_filter($submit, fn (string $field): bool => $form->has($field), ARRAY_FILTER_USE_KEY);
@@ -570,6 +686,14 @@ class CampaignFlowBuilder
 
         $result = array_merge($data, (array) $form->getData());
         if ($form->has('properties')) {
+            // The builder posts every field; empty multi-selects arrive as []
+            // and event handlers rely on that (e.g. campaign.addremovelead).
+            foreach ($form->get('properties') as $name => $child) {
+                $config = $child->getConfig();
+                if ($config->hasOption('multiple') && $config->getOption('multiple') && null === ($result['properties'][$name] ?? null)) {
+                    $result['properties'][$name] = [];
+                }
+            }
             $result['properties'] = $this->settingsOf($step['type'], (array) ($result['properties'] ?? []));
         }
         foreach (['anchor', 'anchorEventType', 'campaignId', 'buttons', 'canvasSettings', 'settings'] as $drop) {
@@ -619,6 +743,9 @@ class CampaignFlowBuilder
         ];
         if ($config->hasOption('multiple') && $config->getOption('multiple')) {
             $out['multiple'] = true;
+        }
+        if ('lead_tag' === $out['kind']) {
+            $out['hint'] = 'Tag names, e.g. ["customer", "newsletter"]; missing tags are created.';
         }
         if ($config->hasOption('choices') && is_array($choices = $config->getOption('choices'))) {
             $flat = [];

@@ -34,7 +34,7 @@ use Symfony\Component\Cache\Psr16Cache;
  */
 class McpServerFactory
 {
-    public const VERSION = '0.3.0';
+    public const VERSION = '0.3.1';
 
     /** Tools that need the mcp:write scope. */
     private const WRITE_TOOLS = ['create_email_draft', 'update_email_draft', 'create_campaign_draft', 'update_campaign_draft', 'set_campaign_steps', 'update_campaign_step', 'add_campaign_step', 'remove_campaign_step'];
