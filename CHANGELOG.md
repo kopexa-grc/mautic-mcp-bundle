@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/kopexa-grc/mautic-mcp-bundle/compare/v0.5.0...v0.6.0) (2026-11-02)
+
+
+### Features
+
+* CRM and brand email tools: companies, custom fields, dynamic segments, layouts, test email, activity ([1823d13](https://github.com/kopexa-grc/mautic-mcp-bundle/commit/1823d130521a5f0c3c1fe5b4e426ce3d416c0bb7))
+
 ## [0.5.0](https://github.com/kopexa-grc/mautic-mcp-bundle/compare/v0.4.1...v0.5.0) (2026-11-02)
 
 
