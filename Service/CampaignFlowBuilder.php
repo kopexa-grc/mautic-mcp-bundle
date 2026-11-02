@@ -36,6 +36,17 @@ class CampaignFlowBuilder
     private const MAX_STEPS = 100;
     private const UNITS     = ['i', 'h', 'd', 'm', 'y'];
 
+    /** Step types that reach people or systems outside Mautic when executed. */
+    private const OUTBOUND_TYPES = [
+        'email.send'           => true,
+        'email.send.to.user'   => true,
+        'message.send'         => true,
+        'campaign.sendwebhook' => true,
+        'plugin.leadpush'      => true,
+        'focus.show'           => true,
+        'dwc.push_content'     => true,
+    ];
+
     public function __construct(
         private readonly EventCollector $eventCollector,
         private readonly FormFactoryInterface $formFactory,
@@ -254,6 +265,9 @@ class CampaignFlowBuilder
         if ($published && $changes['changed'] !== [] && array_sum(array_map(fn ($c) => (int) ($stats[(int) $c['key']]['scheduled'] ?? 0), $changes['changed'])) > 0) {
             $result['note'] = 'Contacts already scheduled on a changed step keep their scheduled time; the change applies to contacts reaching it from now on.';
         }
+        if ($published) {
+            $result['live_effects'] = $this->liveEffects($campaign, $byKey, $changes);
+        }
         if ([] !== $this->tagsToCreate) {
             $result['tags_to_create'] = array_values(array_unique($this->tagsToCreate));
         }
@@ -454,6 +468,42 @@ class CampaignFlowBuilder
         $fields = $this->propertyFields($type);
 
         return null === $fields ? [] : array_intersect_key($this->cleanProperties($properties), array_flip($fields));
+    }
+
+    /**
+     * What saving means for a running campaign: Mautic's scheduler executes
+     * added and changed steps for the contacts in the campaign, which can
+     * send emails or other messages. Reported in dry runs and results.
+     *
+     * @param array<string, array<string, mixed>>                   $byKey
+     * @param array<string, list<array<string, mixed>|string>>      $changes
+     *
+     * @return array<string, mixed>
+     */
+    private function liveEffects(Campaign $campaign, array $byKey, array $changes): array
+    {
+        $prefix   = defined('MAUTIC_TABLE_PREFIX') ? (string) MAUTIC_TABLE_PREFIX : '';
+        $contacts = (int) $this->em->getConnection()->fetchOne(
+            sprintf('SELECT COUNT(*) FROM %scampaign_leads WHERE campaign_id = ? AND manually_removed = 0', $prefix),
+            [$campaign->getId()]
+        );
+        $outbound = [];
+        foreach (['added', 'changed'] as $kind) {
+            foreach ($changes[$kind] as $change) {
+                $step = $byKey[$change['key']] ?? null;
+                if (null !== $step && (self::OUTBOUND_TYPES[$step['type']] ?? false)) {
+                    $outbound[] = ['key' => $change['key'], 'type' => $step['type'], 'name' => $change['name'], 'change' => $kind];
+                }
+            }
+        }
+
+        return [
+            'contacts_in_campaign' => $contacts,
+            'outbound_steps'       => $outbound,
+            'warning'              => [] === $outbound
+                ? 'The campaign is running: changes apply to its contacts as soon as they are saved.'
+                : sprintf('The campaign is running: after saving, Mautic\'s scheduler will execute these steps for contacts reaching them (%d contacts are in the campaign), which sends messages to real recipients. Confirm with the user before saving.', $contacts),
+        ];
     }
 
     /** @return array<int, Event> */

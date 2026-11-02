@@ -34,7 +34,7 @@ use Symfony\Component\Cache\Psr16Cache;
  */
 class McpServerFactory
 {
-    public const VERSION = '0.3.1';
+    public const VERSION = '0.3.2';
 
     /** Tools that need the mcp:write scope. */
     private const WRITE_TOOLS = ['create_email_draft', 'update_email_draft', 'create_campaign_draft', 'update_campaign_draft', 'set_campaign_steps', 'update_campaign_step', 'add_campaign_step', 'remove_campaign_step'];
@@ -111,7 +111,8 @@ class McpServerFactory
             ->setServerInfo('Mautic', self::VERSION, 'Mautic marketing automation (Kopexa build)', websiteUrl: $this->oauth->issuer(), title: 'Mautic')
             ->setInstructions(implode("\n", [
                 'Mautic marketing automation. Read contacts, segments, emails, campaigns and email statistics.',
-                'Write tools create and change drafts; publishing and sending stay with a person in Mautic. Campaign flows of running campaigns can be edited step by step (get_campaign, then update/add/remove_campaign_step); use dryRun first and tell the user how many contacts a removal affects.',
+                'Emails and new campaigns are created unpublished; publishing them and sending stay with a person in Mautic.',
+                'Exception: flows of RUNNING (published) campaigns can be edited (set_campaign_steps, update/add/remove_campaign_step). Such changes are live: Mautic\'s scheduler executes them for the contacts in the campaign and can send emails. Always call with dryRun first, show the user live_effects (outbound steps, contacts in the campaign) and save only after they confirm.',
                 'Every call runs with the Mautic permissions of the signed-in user.',
                 'Return the "url" of created drafts to the user so they can review them.',
             ]))

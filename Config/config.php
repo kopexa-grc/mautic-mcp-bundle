@@ -6,8 +6,8 @@ use MauticPlugin\KopexaMcpBundle\Controller\McpController;
 
 return [
     'name'        => 'MCP',
-    'description' => 'Model Context Protocol server for AI assistants (Claude, ChatGPT). Read access to contacts, segments, emails and campaigns; write access to drafts only.',
-    'version'     => '0.3.1',
+    'description' => 'Model Context Protocol server for AI assistants (Claude, ChatGPT). Read access to contacts, segments, emails and campaigns; creates unpublished email and campaign drafts and edits campaign flows, including running campaigns (live changes).',
+    'version'     => '0.3.2',
     'author'      => 'Kopexa',
     'routes'      => [
         'public' => [
