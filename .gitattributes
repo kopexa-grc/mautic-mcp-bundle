@@ -6,3 +6,4 @@
 /renovate.json export-ignore
 /release-please-config.json export-ignore
 /.release-please-manifest.json export-ignore
+/tests export-ignore
