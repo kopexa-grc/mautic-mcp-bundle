@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.1](https://github.com/kopexa-grc/mautic-mcp-bundle/compare/v0.6.0...v0.6.1) (2026-11-03)
+
+
+### Bug fixes
+
+* 403 insufficient_scope names all regular scopes ([6c1a7b5](https://github.com/kopexa-grc/mautic-mcp-bundle/commit/6c1a7b54dbf80a1a6fa8b6a9e93b3f3978ad4e60))
+
 ## [0.6.0](https://github.com/kopexa-grc/mautic-mcp-bundle/compare/v0.5.0...v0.6.0) (2026-11-02)
 
 
