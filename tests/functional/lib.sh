@@ -102,14 +102,27 @@ authorize() {
     --data-urlencode state=functional --data-urlencode "scope=$4" --data-urlencode "resource=$BASE/mcp"
 }
 # consent <approve|deny> [extra scopes to tick]: posts the consent form like a browser, prints the redirect
+# form_fields <html file> [scopes to tick]: what a browser submits for the
+# consent page's <form>: its inputs only (fields outside the form are not
+# sent), checkboxes only if ticked and not disabled; extra ticks only for
+# checkboxes that exist in the form.
+form_fields() {
+  php -r '
+    $d = new DOMDocument(); @$d->loadHTML((string) file_get_contents($argv[1]));
+    $x = new DOMXPath($d); $tick = array_slice($argv, 2);
+    foreach ($x->query("//form[@method=\"post\"]//input") as $i) {
+      $n = $i->getAttribute("name"); $t = strtolower($i->getAttribute("type"));
+      if ("" === $n || $i->hasAttribute("disabled")) { continue; }
+      if (in_array($t, ["checkbox", "radio"], true) && !$i->hasAttribute("checked") && !in_array($i->getAttribute("value"), $tick, true)) { continue; }
+      echo $n, "=", $i->getAttribute("value"), "\n";
+    }' "$@"
+}
 consent() {
-  local token txn args=() s
-  token="$(sed -n 's/.*name="_token" value="\([^"]*\)".*/\1/p' "$WORK/page")"
-  txn="$(sed -n 's/.*name="txn" value="\([^"]*\)".*/\1/p' "$WORK/page")"
-  while read -r s; do [[ -n "$s" ]] && args+=(--data-urlencode "scopes[]=$s"); done \
-    < <(grep -o 'name="scopes\[\]" value="[^"]*" checked' "$WORK/page" | sed 's/.*value="\([^"]*\)".*/\1/'; for s in ${2:-}; do echo "$s"; done)
+  local args=() f
+  # shellcheck disable=SC2086  # $2: space-separated scopes to tick
+  while IFS= read -r f; do [[ -n "$f" ]] && args+=(--data-urlencode "$f"); done < <(form_fields "$WORK/page" ${2:-})
   curl -s -o /dev/null -w '%{redirect_url}' -b "$JAR" -c "$JAR" -X POST "$BASE/s/oauth2/authorize" \
-    --data-urlencode "_token=$token" --data-urlencode "txn=$txn" --data-urlencode "decision=$1" "${args[@]}"
+    --data-urlencode "decision=$1" "${args[@]}"
 }
 # token <client> <code> <verifier>: writes the response to $WORK/token, prints the HTTP status
 token() {

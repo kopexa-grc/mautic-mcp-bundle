@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace MauticPlugin\KopexaMcpBundle\Controller;
 
 use GuzzleHttp\Psr7\ServerRequest;
+use MauticPlugin\KopexaMcpBundle\Service\McpScopes;
 use MauticPlugin\KopexaMcpBundle\Service\McpServerFactory;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Log\LoggerInterface;
@@ -45,7 +46,29 @@ final class McpController
             return new JsonResponse(['jsonrpc' => '2.0', 'id' => null, 'error' => ['code' => -32603, 'message' => 'Internal error']], 500);
         }
 
-        return $this->toSymfony($response);
+        return $this->toSymfony($this->widenScopeChallenge($response));
+    }
+
+    /**
+     * A 403 insufficient_scope names only the scopes the refused call needs
+     * (e.g. "mcp:read mcp:contacts:write"). Clients that re-authorize with
+     * exactly those lose the scopes they had (mcp:write), and the next call
+     * fails the other way round. Name all regular scopes instead, plus what
+     * the call needs (so an opt-in scope is only asked for when required).
+     */
+    private function widenScopeChallenge(ResponseInterface $response): ResponseInterface
+    {
+        $header = $response->getHeaderLine('WWW-Authenticate');
+        if (403 !== $response->getStatusCode() || !str_contains($header, 'insufficient_scope')) {
+            return $response;
+        }
+        $required = preg_match('/scope="([^"]*)"/', $header, $m) ? preg_split('/\s+/', trim($m[1])) : [];
+        $scopes   = array_values(array_unique(array_filter(array_merge(McpScopes::REGULAR, $required ?: []))));
+        $value    = str_contains($header, 'scope="')
+            ? (string) preg_replace('/scope="[^"]*"/', 'scope="'.implode(' ', $scopes).'"', $header)
+            : $header.', scope="'.implode(' ', $scopes).'"';
+
+        return $response->withHeader('WWW-Authenticate', $value);
     }
 
     public function resourceMetadataAction(Request $request): Response

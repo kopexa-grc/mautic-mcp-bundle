@@ -18,6 +18,9 @@ final class McpScopes implements ScopeProviderInterface
     public const CONTACTS_WRITE = 'mcp:contacts:write';
     public const CAMPAIGNS_LIVE = 'mcp:campaigns:live';
 
+    /** Scopes a client should hold for normal use (all except the opt-in ones). */
+    public const REGULAR = [self::READ, self::WRITE, self::CONTACTS_WRITE];
+
     public function scopes(): iterable
     {
         yield new ScopeDefinition(self::READ, 'Read contacts, segments, emails, campaigns and statistics', default: true);
