@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.7.0](https://github.com/kopexa-grc/mautic-mcp-bundle/compare/v0.6.1...v0.7.0) (2026-11-03)
+
+
+### Features
+
+* lead scoring tools: point groups, point actions, point triggers, contact points ([c274c20](https://github.com/kopexa-grc/mautic-mcp-bundle/commit/c274c208ce08a62761f936c747307e3557f6790d))
+* stages and projects ([fd1d07d](https://github.com/kopexa-grc/mautic-mcp-bundle/commit/fd1d07d0d152be840b43929a6e9ece277096d4c5))
+
 ## [0.6.1](https://github.com/kopexa-grc/mautic-mcp-bundle/compare/v0.6.0...v0.6.1) (2026-11-03)
 
 
