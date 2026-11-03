@@ -66,4 +66,24 @@ co="$(tool "$contacts" upsert_companies '{"companies":[{"fields":{"companyname":
 [[ "$(jq -r .counts.created <<<"$co")" == 1 ]] && pass "upsert_companies" || { echo "$co"; fail "upsert_companies"; }
 dyn="$(tool "$contacts" create_segment '{"name":"ACME people","filters":[{"field":"company","operator":"=","value":"ACME"}],"dryRun":true}')"
 jq -e '.dry_run == true and (.matching_contacts | type == "number")' <<<"$dyn" >/dev/null && pass "dynamic segment dry run with count" || { echo "$dyn"; fail "dynamic segment"; }
+
+echo "lead scoring"
+mcp_init "$write"
+gid="$(tool "$write" create_point_group '{"name":"Interest"}' | jq -r .id)"
+[[ "$(tool "$write" create_point_action '{"name":"x","type":"url.hit","delta":5,"properties":{}}')" == "ERROR: "*"page_url"* ]] \
+  && [[ "$(tool "$write" create_point_action "{\"name\":\"Pricing\",\"type\":\"url.hit\",\"delta\":20,\"groupId\":$gid,\"properties\":{\"page_url\":\"https://example.com/pricing*\"}}" | jq -r .published)" == false ]] \
+  && pass "create_point_action: unpublished, required settings enforced" || fail "point action"
+trig="$(tool "$write" create_point_trigger "{\"name\":\"Hot\",\"points\":50,\"groupId\":$gid,\"events\":[{\"type\":\"lead.changetags\",\"name\":\"tag\",\"properties\":{\"add_tags\":[\"hot\"]}}]}")"
+tid="$(jq -r .id <<<"$trig")"
+[[ "$(jq -r .published <<<"$trig")" == false ]] && pass "create_point_trigger (unpublished)" || { echo "$trig"; fail "point trigger"; }
+api -X PATCH "$BASE/api/points/triggers/$tid/edit" -d isPublished=1 >/dev/null
+scorer="$(access_token 'mcp:read mcp:write mcp:contacts:write')"
+mcp_init "$scorer"
+lead="$(api -X POST "$BASE/api/contacts/new" -d email=hot@example.com | jq -r .contact.id)"
+adj="$(tool "$scorer" adjust_contact_points "{\"contactId\":$lead,\"points\":60,\"groupId\":$gid}")"
+jq -e --argjson t "$tid" '.points.after == 60 and ([.triggers[].id] == [$t])' <<<"$adj" >/dev/null \
+  && [[ "$(api "$BASE/api/contacts/$lead" | jq -r '[.contact.tags[].tag] | index("hot") != null')" == true ]] \
+  && pass "adjust_contact_points: Mautic fires the published trigger" || { echo "$adj"; fail "adjust points"; }
+[[ "$(tool "$scorer" update_point_trigger "{\"id\":$tid,\"points\":40}")" == "ERROR: "*"mcp:campaigns:live"* ]] \
+  && pass "published trigger locked without mcp:campaigns:live" || fail "trigger lock"
 echo "all MCP checks passed"

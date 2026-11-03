@@ -41,7 +41,7 @@ const STEP_SCHEMA = [
                             'at'       => ['type' => 'string', 'description' => 'Fixed date-time (ISO 8601) instead of an interval'],
                         ],
                     ],
-                    'properties' => ['type' => 'object', 'description' => 'Settings of the step type, see describe_campaign_step_type. For email.send: {"email": <template email id>, "email_type": "marketing"|"transactional"}'],
+                    'properties' => ['type' => ['object', 'array'], 'description' => 'Settings of the step type, see describe_campaign_step_type. For email.send: {"email": <template email id>, "email_type": "marketing"|"transactional"}'],
                 ],
             ];
 

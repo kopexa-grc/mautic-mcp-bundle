@@ -71,6 +71,7 @@ class ReadTools
 
         return $this->contactSummary($lead) + [
             'fields'          => $this->profileFields($lead),
+            'point_groups'    => array_values(array_map(fn ($g): array => ['id' => $g->getGroup()->getId(), 'name' => $g->getGroup()->getName(), 'score' => (int) $g->getScore()], $lead->getGroupScores()->toArray())),
             'segments'        => array_values(array_map(fn (LeadList $s): array => ['id' => $s->getId(), 'name' => $s->getName()], $this->leads->getLists($lead))),
             'do_not_contact'  => array_values(array_map(fn ($d): array => ['channel' => $d->getChannel(), 'reason' => [1 => 'unsubscribed', 2 => 'bounced', 3 => 'manual'][$d->getReason()] ?? $d->getReason(), 'date' => $d->getDateAdded()?->format(DATE_ATOM)], $lead->getDoNotContact()->toArray())),
             'date_identified' => $lead->getDateIdentified()?->format(DATE_ATOM),

@@ -34,6 +34,11 @@ Claude, ChatGPT and other MCP clients can:
   Adding contacts to a segment can start running campaigns and segment
   emails for them; results and dry runs report it
 - read a contact's activity (opens, clicks, visits, forms, points)
+- set up lead scoring: point groups, point actions (points for visits,
+  downloads, forms, emails) and point triggers (tag, segment, stage,
+  campaign or email when a contact reaches a score), all **unpublished**,
+  and give contacts points. Mautic fires published triggers when a contact
+  crosses their score; dry runs list the ones that would fire
 - build and edit complete campaign flows (actions, decisions, conditions,
   waits). This also works on **running** campaigns, where changes are live:
   Mautic's scheduler executes them and may send emails. Publishing and
