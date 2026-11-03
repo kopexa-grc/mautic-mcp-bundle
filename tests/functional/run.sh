@@ -86,4 +86,16 @@ jq -e --argjson t "$tid" '.points.after == 60 and ([.triggers[].id] == [$t])' <<
   && pass "adjust_contact_points: Mautic fires the published trigger" || { echo "$adj"; fail "adjust points"; }
 [[ "$(tool "$scorer" update_point_trigger "{\"id\":$tid,\"points\":40}")" == "ERROR: "*"mcp:campaigns:live"* ]] \
   && pass "published trigger locked without mcp:campaigns:live" || fail "trigger lock"
+
+echo "stages and projects"
+st="$(tool "$scorer" create_stage '{"name":"Customer","weight":40}')"; stid="$(jq -r .id <<<"$st")"
+[[ "$(tool "$scorer" set_contact_stage "{\"contactId\":$lead,\"stage\":\"Customer\"}")" == "ERROR: "*"not published"* ]] \
+  && [[ "$(tool "$scorer" create_stage '{"name":"Other","weight":40}')" == "ERROR: "*"weight 40"* ]] \
+  && pass "create_stage: unpublished, unique weight" || { echo "$st"; fail "create_stage"; }
+api -X PATCH "$BASE/api/stages/$stid/edit" -d isPublished=1 >/dev/null
+tool "$scorer" set_contact_stage "{\"contactId\":$lead,\"stage\":\"Customer\"}" >/dev/null
+[[ "$(api "$BASE/api/contacts/$lead" | jq -r .contact.stage.name)" == Customer ]] && pass "set_contact_stage" || fail "set_contact_stage"
+prid="$(tool "$scorer" create_project '{"name":"Functional"}' | jq -r .id)"
+tool "$scorer" add_to_project "{\"projectId\":$prid,\"type\":\"stage\",\"ids\":[$stid]}" >/dev/null
+[[ "$(tool "$scorer" get_project "{\"id\":$prid}" | jq -r '.items.stage[0].name')" == Customer ]] && pass "projects: add item, get_project" || fail "projects"
 echo "all MCP checks passed"

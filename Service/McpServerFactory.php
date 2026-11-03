@@ -22,7 +22,9 @@ use MauticPlugin\KopexaMcpBundle\Tools\CompanyTools;
 use MauticPlugin\KopexaMcpBundle\Tools\ContactTools;
 use MauticPlugin\KopexaMcpBundle\Tools\LayoutTools;
 use MauticPlugin\KopexaMcpBundle\Tools\PointTools;
+use MauticPlugin\KopexaMcpBundle\Tools\ProjectTools;
 use MauticPlugin\KopexaMcpBundle\Tools\SegmentTools;
+use MauticPlugin\KopexaMcpBundle\Tools\StageTools;
 use MauticPlugin\KopexaMcpBundle\Tools\ReadTools;
 use MauticPlugin\KopexaMcpBundle\Tools\WriteTools;
 use MauticPlugin\KopexaOAuthBundle\Service\Settings as OAuthSettings;
@@ -42,10 +44,10 @@ class McpServerFactory
     public const VERSION = '0.6.1'; // x-release-please-version
 
     /** Tools that need the mcp:write scope. */
-    private const WRITE_TOOLS = ['create_email_draft', 'update_email_draft', 'send_test_email', 'create_email_from_layout', 'update_email_layout', 'create_point_group', 'update_point_group', 'create_point_action', 'update_point_action', 'create_point_trigger', 'update_point_trigger', 'create_campaign_draft', 'update_campaign_draft', 'set_campaign_steps', 'update_campaign_step', 'add_campaign_step', 'remove_campaign_step'];
+    private const WRITE_TOOLS = ['create_email_draft', 'update_email_draft', 'send_test_email', 'create_email_from_layout', 'update_email_layout', 'create_point_group', 'update_point_group', 'create_point_action', 'update_point_action', 'create_point_trigger', 'update_point_trigger', 'create_stage', 'update_stage', 'create_project', 'update_project', 'add_to_project', 'remove_from_project', 'create_campaign_draft', 'update_campaign_draft', 'set_campaign_steps', 'update_campaign_step', 'add_campaign_step', 'remove_campaign_step'];
 
     /** Tools that need the mcp:contacts:write scope. */
-    private const CONTACT_TOOLS = ['upsert_contacts', 'create_segment', 'update_segment', 'add_contacts_to_segment', 'remove_contacts_from_segment', 'create_contact_field', 'upsert_companies', 'add_contacts_to_company', 'remove_contacts_from_company', 'adjust_contact_points'];
+    private const CONTACT_TOOLS = ['upsert_contacts', 'create_segment', 'update_segment', 'add_contacts_to_segment', 'remove_contacts_from_segment', 'create_contact_field', 'upsert_companies', 'add_contacts_to_company', 'remove_contacts_from_company', 'adjust_contact_points', 'set_contact_stage'];
 
     public function __construct(
         private readonly OAuthSettings $oauth,
@@ -56,6 +58,8 @@ class McpServerFactory
         private readonly SegmentTools $segmentTools,
         private readonly LayoutTools $layoutTools,
         private readonly PointTools $pointTools,
+        private readonly StageTools $stageTools,
+        private readonly ProjectTools $projectTools,
         private readonly Connection $connection,
         private readonly LoggerInterface $logger,
     ) {
@@ -122,11 +126,15 @@ class McpServerFactory
 
         return Server::builder()
             ->setServerInfo('Mautic', self::VERSION, 'Mautic marketing automation (Kopexa build)', websiteUrl: $this->oauth->issuer(), title: 'Mautic')
+            // One page for all tools: not every client follows nextCursor.
+            ->setPaginationLimit(200)
             ->setInstructions(implode("\n", [
                 'Mautic marketing automation. Read contacts, segments, emails, campaigns and email statistics.',
                 'Emails: prefer create_email_from_layout (brand theme from panels and elements, see list_email_layouts; editable in Mautic\'s builder) over create_email_draft (raw HTML). Then send_test_email to the user and share the "url" for review.',
                 'Contacts, companies and segments (scope mcp:contacts:write): upsert_contacts / upsert_companies create or update records matched by their unique fields (up to 100 per call; field aliases from list_contact_fields; create_contact_field adds missing fields, e.g. for CRM IDs). Segments are static (create_segment without filters, add/remove_contacts_to/from_segment) or dynamic (filters from list_segment_filter_fields; Mautic keeps them up to date). Contacts that join a segment can enter running campaigns and receive published segment emails of it: when segments are involved, call with dryRun first, show the user live_effects and matching_contacts and save only after they confirm. Never change records the user did not ask for; Do-Not-Contact is never changed.',
                 'Lead scoring: point groups (separate scores per topic), point actions (what earns points; list/describe_point_action_types) and point triggers (what happens at a score; list/describe_point_trigger_event_types). New actions and triggers are created unpublished; a person publishes them. Changing a PUBLISHED trigger is live and needs mcp:campaigns:live; adjust_contact_points can fire published triggers at once. Call both with dryRun first and show the user live_effects / triggers before saving.',
+                'Stages are the lifecycle of a contact (list_stages, ordered by weight). New stages are unpublished; set_contact_stage only moves contacts into published stages and can make dynamic segments (and their campaigns) pick the contact up: dryRun first, show live_effects.',
+                'Projects group items (emails, campaigns, segments, forms, point actions, stages, ...) by topic; assigning items to a project changes nothing else about them.',
                 'For exports to other systems, search_contacts / search_companies with includeFields return all fields; paginate with limit/offset. get_contact_activity shows a contact\'s history (opens, clicks, visits, forms, points).',
                 'Emails and new campaigns are created unpublished; publishing them and sending stay with a person in Mautic.',
                 'Exception: flows of RUNNING (published) campaigns can be edited (set_campaign_steps, update/add/remove_campaign_step) if the instance allows it and the user granted the scope mcp:campaigns:live. Such changes are live: Mautic\'s scheduler executes them for the contacts in the campaign and can send emails. Always call with dryRun first, show the user live_effects (outbound steps, contacts in the campaign, save_allowed) and save only after they confirm.',
@@ -185,6 +193,16 @@ class McpServerFactory
             ->addTool([$this->write, 'updateCampaignStep'], 'update_campaign_step', 'Update campaign step', null, new ToolAnnotations(readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false))
             ->addTool([$this->write, 'addCampaignStep'], 'add_campaign_step', 'Add campaign step', null, $rw)
             ->addTool([$this->write, 'removeCampaignStep'], 'remove_campaign_step', 'Remove campaign step', null, new ToolAnnotations(readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false))
+            ->addTool([$this->stageTools, 'listStages'], 'list_stages', 'Stages', null, $ro)
+            ->addTool([$this->stageTools, 'createStage'], 'create_stage', 'Create stage', null, $rw)
+            ->addTool([$this->stageTools, 'updateStage'], 'update_stage', 'Update stage', null, new ToolAnnotations(readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false))
+            ->addTool([$this->stageTools, 'setContactStage'], 'set_contact_stage', 'Move contact to stage', null, new ToolAnnotations(readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true))
+            ->addTool([$this->projectTools, 'listProjects'], 'list_projects', 'Projects', null, $ro)
+            ->addTool([$this->projectTools, 'getProject'], 'get_project', 'Project with its items', null, $ro)
+            ->addTool([$this->projectTools, 'createProject'], 'create_project', 'Create project', null, $rw)
+            ->addTool([$this->projectTools, 'updateProject'], 'update_project', 'Update project', null, new ToolAnnotations(readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false))
+            ->addTool([$this->projectTools, 'addToProject'], 'add_to_project', 'Add items to project', null, new ToolAnnotations(readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false))
+            ->addTool([$this->projectTools, 'removeFromProject'], 'remove_from_project', 'Remove items from project', null, new ToolAnnotations(readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false))
             ->build();
     }
 }

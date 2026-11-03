@@ -39,6 +39,9 @@ Claude, ChatGPT and other MCP clients can:
   campaign or email when a contact reaches a score), all **unpublished**,
   and give contacts points. Mautic fires published triggers when a contact
   crosses their score; dry runs list the ones that would fire
+- manage stages (lifecycle phases, created **unpublished**) and move
+  contacts between published stages; group emails, campaigns, segments,
+  forms, stages, ... into projects (Mautic 7)
 - build and edit complete campaign flows (actions, decisions, conditions,
   waits). This also works on **running** campaigns, where changes are live:
   Mautic's scheduler executes them and may send emails. Publishing and

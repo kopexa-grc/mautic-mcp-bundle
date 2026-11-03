@@ -229,6 +229,10 @@ class SegmentTools
             $value = $f['value'] ?? null;
             if ('tags' === $type && null !== $value) {
                 $value = array_map(fn ($tag): string => (string) $this->tagId((string) $tag), (array) $value);
+            } elseif (null !== $value && null !== ($labels = $this->choiceValues($def))) {
+                // Choice lists such as stage or owner store IDs; accept the labels too.
+                $map   = fn ($v): string => $labels[mb_strtolower((string) $v)] ?? (string) $v;
+                $value = is_array($value) || in_array($operator, ['in', '!in'], true) ? array_map($map, (array) $value) : $map($value);
             } elseif (in_array($operator, ['in', '!in'], true) && null !== $value) {
                 $value = array_map('strval', (array) $value);
             } elseif (is_bool($value)) {
@@ -377,6 +381,27 @@ class SegmentTools
         }
 
         return array_slice($values, 0, 50);
+    }
+
+    /**
+     * Label => value of a filter's choice list when they differ (e.g. stage name => stage ID).
+     *
+     * @return array<string, string>|null
+     */
+    private function choiceValues(array $def): ?array
+    {
+        $list = $def['properties']['list'] ?? null;
+        if (!is_array($list)) {
+            return null;
+        }
+        $map = [];
+        array_walk_recursive($list, function ($v, $k) use (&$map): void {
+            if (is_string($k) && (string) $v !== $k) {
+                $map[mb_strtolower($k)] = (string) $v;
+            }
+        });
+
+        return [] !== $map ? $map : null;
     }
 
     private function publicObject(string $object): string

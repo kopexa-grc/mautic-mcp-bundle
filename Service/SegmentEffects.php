@@ -30,7 +30,16 @@ class SegmentEffects
      */
     public function forSegments(array $segments): array
     {
-        $ids    = array_map(fn (LeadList $s): int => (int) $s->getId(), $segments);
+        return $this->forSegmentIds(array_map(fn (LeadList $s): int => (int) $s->getId(), $segments));
+    }
+
+    /**
+     * @param list<int> $ids
+     *
+     * @return array<string, mixed>
+     */
+    public function forSegmentIds(array $ids): array
+    {
         $prefix = defined('MAUTIC_TABLE_PREFIX') ? (string) MAUTIC_TABLE_PREFIX : '';
         $campaigns = $this->connection->fetchAllAssociative(
             "SELECT DISTINCT c.id, c.name FROM {$prefix}campaigns c JOIN {$prefix}campaign_leadlist_xref x ON x.campaign_id = c.id

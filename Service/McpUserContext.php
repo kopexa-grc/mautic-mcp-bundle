@@ -66,6 +66,14 @@ class McpUserContext
     public function requireEntityAccess(RequestContext $context, object $entity, string $base, string $action): void
     {
         $this->user($context);
+        if (!$this->security->checkPermissionExists("{$base}:{$action}own")) {
+            // Bundles with standard permissions only (stages, projects): no own/other.
+            if (!$this->security->isGranted("{$base}:{$action}")) {
+                throw new ToolCallException(sprintf('Your Mautic role does not allow to %s this item.', $action));
+            }
+
+            return;
+        }
         $owner = method_exists($entity, 'getPermissionUser') ? $entity->getPermissionUser() : (method_exists($entity, 'getCreatedBy') ? $entity->getCreatedBy() : 0);
         if (!$this->security->hasEntityAccess("{$base}:{$action}own", "{$base}:{$action}other", $owner)) {
             throw new ToolCallException(sprintf('Your Mautic role does not allow to %s this item.', $action));
