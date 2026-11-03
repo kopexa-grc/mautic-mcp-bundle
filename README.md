@@ -59,11 +59,15 @@ Setup, tools and permission model: [docs/mcp.md](https://github.com/kopexa-grc/m
 - `bin/check.sh` checks the package (PHP lint, `composer validate`, version
   consistency). CI runs it on every push and pull request.
 - `tests/functional/run.sh` installs the plugin into a real Mautic 7 and
-  tests it over HTTP; CI runs it on PHP 8.4 and 8.5.
-- End-to-end tests also run in
-  [kopexa-grc/mautic-stack](https://github.com/kopexa-grc/mautic-stack): its
-  smoke test installs this package into the Mautic image and exercises it
-  end to end.
+  tests it over HTTP; CI runs it on PHP 8.4 and 8.5. The tool tests are
+  split by topic (`core.sh`: drafts, scopes, campaign flows run by
+  Mautic's cron, running campaigns and their locks, roles;
+  `scenarios.sh`: two realistic campaigns incl. a tracked email open;
+  `contacts.sh`, `crm.sh`, `points.sh`, `stages.sh`).
+- [kopexa-grc/mautic-stack](https://github.com/kopexa-grc/mautic-stack)
+  only tests the integration in its image: discovery behind the public
+  URL, MCP sessions across replicas, the operator switch via environment,
+  brand layouts with its themes.
 - **Commits** follow [Conventional Commits](https://www.conventionalcommits.org)
   (`feat:`, `fix:`, `docs:`, `chore:` …); they drive versions and the changelog.
 - **Releases** are automated with

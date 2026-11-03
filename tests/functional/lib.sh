@@ -162,3 +162,16 @@ tool() { # <token> <name> <arguments json>: prints the tool result text (prefixe
   mcp_post "$1" "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"$2\",\"arguments\":$3}}" \
     | jq -r 'if .result then (if .result.isError then "ERROR: " else "" end) + .result.content[0].text else tostring end'
 }
+
+# call <token> <tool> <arguments json>: prints the raw JSON-RPC response
+# (HTTP headers in $WORK/mcp-headers); result: the tool's text from it.
+call() { mcp_post "$1" "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"$2\",\"arguments\":$3}}"; }
+result() { jq -r '.result.content[0].text // empty' <<<"$1"; }
+
+# db <sql>: runs a query on Mautic's database, prints rows tab-separated (NULL as NULL).
+db() {
+  php -r '
+    $pdo = new PDO(sprintf("mysql:host=%s;port=%s;dbname=%s;charset=utf8mb4", getenv("DB_HOST"), getenv("DB_PORT") ?: "3306", getenv("DB_NAME")), getenv("DB_USER"), getenv("DB_PASSWORD"));
+    foreach ($pdo->query($argv[1])->fetchAll(PDO::FETCH_NUM) as $row) { echo implode("\t", array_map(fn ($v) => $v ?? "NULL", $row)), "\n"; }
+  ' "$1"
+}
