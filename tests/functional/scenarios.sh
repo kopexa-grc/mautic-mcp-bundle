@@ -72,14 +72,14 @@ sc_console mautic:campaigns:trigger -i "$camp_a" >/dev/null
 hash="$(sc_sql "SELECT tracking_hash FROM email_stats WHERE email_id = $e_welcome AND lead_id = $lead_a")"
 [[ -n "$hash" ]] && pass "A: Mautic sent the welcome email to the trial user" || fail "A: welcome email not sent"
 # Anna opens the email (Mautic's real tracking pixel), the hit queue is processed.
-curl -s -o /dev/null "$BASE/email/$hash.gif"
+pixel="$(curl -s -o /dev/null -w '%{http_code}' -A 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15' "$BASE/email/$hash.gif")"
 console messenger:consume email hit --time-limit=8 >/dev/null 2>&1 || true
 sc_console mautic:campaigns:trigger -i "$camp_a" >/dev/null
 tags="$(api "$BASE/api/contacts/$lead_a" | jq -c '[.contact.tags[].tag]')"
 live_a="$(result "$(call "$access" get_campaign "{\"id\":$camp_a}")")"
 [[ "$tags" == '["trial-aktiv"]' ]] && jq -e '[.steps[] | select(.name == "ISO-27001-Fahrplan") | .contacts.scheduled] == [1]' <<<"$live_a" >/dev/null \
   && pass "A: email opened -> yes branch: tagged trial-aktiv, roadmap email scheduled in 2 days" \
-  || { echo "tags=$tags"; jq -c '[.steps[] | {name, contacts}]' <<<"$live_a" | head -c 1500; fail "A: yes branch after the open"; }
+  || { echo "tags=$tags pixel=$pixel"; db "SELECT is_read, open_count, date_read FROM email_stats WHERE tracking_hash = '$hash'"; db "SELECT ip_address FROM ip_addresses"; jq -c '[.steps[] | {name, contacts}]' <<<"$live_a" | head -c 1500; fail "A: yes branch after the open"; }
 
 # --- B: NIS2 webinar follow-up ------------------------------------------------
 seg_web="$(api -X POST "$BASE/api/segments/new" -d name='Webinar NIS2 – Teilnehmer' -d isPublished=1 | jq -r .list.id)"
