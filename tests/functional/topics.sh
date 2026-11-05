@@ -8,8 +8,8 @@ for t in 'Webinare & Events' 'Produkt-Updates'; do api -X POST "$BASE/api/catego
 topics="$(tool "$access" list_email_topics '{}')"
 jq -e '[.topics[].name] | index("Webinare & Events") and index("Produkt-Updates")' <<<"$topics" >/dev/null \
   && pass "list_email_topics" || { echo "$topics"; fail "list_email_topics"; }
-panels='[{"type":"article","items":[{"type":"title","text":"Einladung"}]}]'
-with="$(tool "$access" create_email_from_layout "{\"name\":\"Topic\",\"subject\":\"x\",\"panels\":$panels,\"topic\":\"webinare & events\"}")"
+# (The layout tools share EmailTopics; they need a theme with email layouts, not installed here.)
+with="$(tool "$access" create_email_draft '{"name":"Topic","subject":"x","html":"<p>x</p>","topic":"webinare & events"}')"
 without="$(tool "$access" create_email_draft '{"name":"No topic","subject":"x","html":"<p>x</p>"}')"
 jq -e '.topic == "Webinare & Events" and (has("topic_warning") | not)' <<<"$with" >/dev/null && jq -e '.topic == null and (.topic_warning | test("No topic"))' <<<"$without" >/dev/null \
   && [[ "$(api "$BASE/api/emails/$(jq -r .id <<<"$with")" | jq -r .email.category.title)" == "Webinare & Events" ]] \
