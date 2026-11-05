@@ -18,6 +18,7 @@ use Mcp\Exception\ToolCallException;
 use Mcp\Server\RequestContext;
 use MauticPlugin\KopexaMcpBundle\Service\CampaignFlowBuilder;
 use MauticPlugin\KopexaMcpBundle\Service\McpUserContext;
+use MauticPlugin\KopexaMcpBundle\Service\EmailTopics;
 
 /**
  * Read-only tools (scope mcp:read). Every call is checked against the
@@ -33,6 +34,7 @@ class ReadTools
         private readonly CampaignModel $campaigns,
         private readonly CoreParametersHelper $parameters,
         private readonly CampaignFlowBuilder $flow,
+        private readonly EmailTopics $topics,
     ) {
     }
 
@@ -178,10 +180,23 @@ class ReadTools
             'from_email' => $email->getFromAddress(),
             'reply_to'   => $email->getReplyToAddress(),
             'theme'      => $email->getTemplate(),
+            'topic'      => $email->getCategory()?->getTitle(),
             'segments'   => array_values(array_map(fn (LeadList $s): array => ['id' => $s->getId(), 'name' => $s->getName()], $email->getLists()->toArray())),
             'plain_text' => $email->getPlainText(),
             'html'       => $includeHtml ? $email->getCustomHtml() : null,
         ];
+    }
+
+    /**
+     * List the email topics (Mautic categories). Recipients switch topics on and off in their email preferences; Mautic does not send an email of a topic to people who switched it off. Give every marketing email its topic (topic parameter of the email tools); service emails the person asked for (download link, webinar access) have none and go out as transactional campaign steps.
+     *
+     * @return array<string, mixed>
+     */
+    public function listEmailTopics(RequestContext $context): array
+    {
+        $this->auth->require($context, ['email:emails:viewown', 'email:emails:viewother']);
+
+        return ['topics' => $this->topics->all()];
     }
 
     /**

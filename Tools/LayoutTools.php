@@ -15,6 +15,7 @@ use Mcp\Exception\ToolCallException;
 use Mcp\Server\RequestContext;
 use MauticPlugin\GrapesJsBuilderBundle\Entity\GrapesJsBuilder;
 use MauticPlugin\KopexaMcpBundle\Service\EmailLayouts;
+use MauticPlugin\KopexaMcpBundle\Service\EmailTopics;
 use MauticPlugin\KopexaMcpBundle\Service\McpUserContext;
 
 const LAYOUT_SCHEMA = [
@@ -44,6 +45,7 @@ class LayoutTools
         private readonly ListModel $segments,
         private readonly EntityManagerInterface $em,
         private readonly CoreParametersHelper $parameters,
+        private readonly EmailTopics $topics,
     ) {
     }
 
@@ -67,6 +69,7 @@ class LayoutTools
      * @param list<int>                  $segmentIds Segments of a segment email
      * @param string                     $preheader  Preview text after the subject
      * @param string                     $theme      Theme with layouts (default: the first, e.g. "kopexa")
+     * @param string                     $topic      Topic of the email (name or ID from list_email_topics): people who switched the topic off in their email preferences do not get it. Leave empty only for service emails the person asked for
      *
      * @return array<string, mixed>
      */
@@ -80,6 +83,7 @@ class LayoutTools
         string $preheader = '',
         string $language = '',
         string $theme = '',
+        string $topic = '',
     ): array {
         $this->auth->require($context, 'email:emails:create');
         $theme    = $this->theme($theme);
@@ -96,6 +100,7 @@ class LayoutTools
         $email->setLanguage('' !== $language ? $language : (string) $this->parameters->get('locale', 'en'));
         $email->setDescription('Created via MCP from the '.$theme.' layout. Review before publishing.');
         $email->setIsPublished(false);
+        $this->topics->apply($email, $topic);
         foreach ($this->segmentEntities($context, $segmentIds) as $segment) {
             $email->addList($segment);
         }
@@ -110,6 +115,7 @@ class LayoutTools
      * Replace the content of an unpublished, never-sent email with new panels (see list_email_layouts); optionally change the subject.
      *
      * @param list<array<string, mixed>> $panels Panels in order
+     * @param string|null                $topic  New topic (name or ID, "" removes it), see list_email_topics
      *
      * @return array<string, mixed>
      */
@@ -120,6 +126,7 @@ class LayoutTools
         ?string $subject = null,
         ?string $preheader = null,
         string $theme = '',
+        ?string $topic = null,
     ): array {
         $email = $this->emails->getEntity($id);
         if (!$email instanceof Email || !$email->getId()) {
@@ -140,6 +147,7 @@ class LayoutTools
         if (null !== $preheader) {
             $email->setPreheaderText($preheader);
         }
+        $this->topics->apply($email, $topic);
         $this->emails->saveEntity($email);
         $this->storeMjml($email, $rendered['mjml']);
         $this->auth->audit('email', (int) $email->getId(), 'update', ['layout' => $theme, 'panels' => array_column($panels, 'type')]);
@@ -210,6 +218,6 @@ class LayoutTools
             'message'   => $message,
             'url'       => $base.'/s/emails/view/'.$email->getId(),
             'preview'   => $base.'/email/preview/'.$email->getId(),
-        ];
+        ] + $this->topics->describe($email);
     }
 }

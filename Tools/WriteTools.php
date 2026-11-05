@@ -20,6 +20,7 @@ use Mcp\Server\RequestContext;
 use MauticPlugin\KopexaMcpBundle\Service\CampaignFlowBuilder;
 use MauticPlugin\KopexaMcpBundle\Service\McpScopes;
 use MauticPlugin\KopexaMcpBundle\Service\McpUserContext;
+use MauticPlugin\KopexaMcpBundle\Service\EmailTopics;
 
 const STEP_SCHEMA = [
                 'type'                 => 'object',
@@ -72,11 +73,12 @@ class WriteTools
         private readonly CampaignFlowBuilder $flow,
         private readonly LeadModel $leads,
         private readonly FakeContactHelper $fakeContact,
+        private readonly EmailTopics $topics,
     ) {
     }
 
     /**
-     * Create an unpublished email draft. Write complete, email-safe HTML (tables, inline styles, max width 600px) and include {unsubscribe_text} in the footer of segment emails. A human reviews and publishes it in Mautic.
+     * Create an unpublished email draft. Write complete, email-safe HTML (tables, inline styles, max width 600px) and include an unsubscribe link in the footer, e.g. <a href="{unsubscribe_url}">Abmelden oder Themen wählen</a> (Mautic's {unsubscribe_text} renders an English text). Prefer create_email_from_layout. A human reviews and publishes it in Mautic.
      *
      * @param string    $name       Internal name
      * @param string    $subject    Subject line
@@ -85,6 +87,7 @@ class WriteTools
      * @param list<int> $segmentIds Segment IDs for a segment email
      * @param string    $preheader  Preview text shown after the subject
      * @param string    $language   Language code, e.g. "de" or "en"
+     * @param string    $topic      Topic of the email (name or ID from list_email_topics): people who switched the topic off in their email preferences do not get it. Leave empty only for service emails the person asked for
      *
      * @return array<string, mixed>
      */
@@ -97,6 +100,7 @@ class WriteTools
         array $segmentIds = [],
         string $preheader = '',
         string $language = '',
+        string $topic = '',
     ): array {
         $this->auth->require($context, 'email:emails:create');
 
@@ -110,6 +114,7 @@ class WriteTools
         $email->setLanguage('' !== $language ? $language : (string) $this->parameters->get('locale', 'en'));
         $email->setDescription('Draft created via MCP. Review before publishing.');
         $email->setIsPublished(false);
+        $this->topics->apply($email, $topic);
         foreach ($this->segmentEntities($context, $segmentIds) as $segment) {
             $email->addList($segment);
         }
@@ -129,6 +134,7 @@ class WriteTools
      * @param string|null    $html       New full HTML document
      * @param list<int>|null $segmentIds Replace the segments (segment emails)
      * @param string|null    $preheader  New preview text
+     * @param string|null    $topic      New topic (name or ID, "" removes it), see list_email_topics
      *
      * @return array<string, mixed>
      */
@@ -140,6 +146,7 @@ class WriteTools
         ?string $html = null,
         ?array $segmentIds = null,
         ?string $preheader = null,
+        ?string $topic = null,
     ): array {
         $email = $this->emails->getEntity($id);
         if (!$email instanceof Email || !$email->getId()) {
@@ -167,6 +174,9 @@ class WriteTools
         if (null !== $preheader) {
             $email->setPreheaderText($preheader);
             $changed[] = 'preheader';
+        }
+        if ($this->topics->apply($email, $topic)) {
+            $changed[] = 'topic';
         }
         if (null !== $segmentIds) {
             foreach ($email->getLists()->toArray() as $segment) {
@@ -518,7 +528,7 @@ class WriteTools
             'published' => $email->isPublished(),
             'message'   => $message,
             'url'       => rtrim((string) $this->parameters->get('site_url'), '/').'/s/emails/view/'.$email->getId(),
-        ];
+        ] + $this->topics->describe($email);
     }
 
     /** @return array<string, mixed> */

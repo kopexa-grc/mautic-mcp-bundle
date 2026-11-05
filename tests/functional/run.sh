@@ -4,7 +4,7 @@
 #
 # The tool tests are split by topic and sourced in order (later files use
 # IDs from earlier ones): core.sh, scenarios.sh, contacts.sh, crm.sh,
-# points.sh, stages.sh.
+# points.sh, stages.sh, topics.sh.
 # shellcheck source=tests/functional/lib.sh
 source "$(dirname "$0")/lib.sh"
 here="$(dirname "$0")"
@@ -47,4 +47,6 @@ source "$here/crm.sh"
 source "$here/points.sh"
 # shellcheck source=tests/functional/stages.sh
 source "$here/stages.sh"
+# shellcheck source=tests/functional/topics.sh
+source "$here/topics.sh"
 echo "all MCP checks passed"

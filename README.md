@@ -34,6 +34,9 @@ Claude, ChatGPT and other MCP clients can:
   Adding contacts to a segment can start running campaigns and segment
   emails for them; results and dry runs report it
 - read a contact's activity (opens, clicks, visits, forms, points)
+- give emails their topic (Mautic categories): recipients switch topics off
+  in their email preferences, Mautic then skips those emails for them;
+  emails without a topic come with a warning
 - set up lead scoring: point groups, point actions (points for visits,
   downloads, forms, emails) and point triggers (tag, segment, stage,
   campaign or email when a contact reaches a score), all **unpublished**,
@@ -63,7 +66,7 @@ Setup, tools and permission model: [docs/mcp.md](https://github.com/kopexa-grc/m
   split by topic (`core.sh`: drafts, scopes, campaign flows run by
   Mautic's cron, running campaigns and their locks, roles;
   `scenarios.sh`: two realistic campaigns incl. a tracked email open;
-  `contacts.sh`, `crm.sh`, `points.sh`, `stages.sh`).
+  `contacts.sh`, `crm.sh`, `points.sh`, `stages.sh`, `topics.sh`).
 - [kopexa-grc/mautic-stack](https://github.com/kopexa-grc/mautic-stack)
   only tests the integration in its image: discovery behind the public
   URL, MCP sessions across replicas, the operator switch via environment,
