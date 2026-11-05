@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.0](https://github.com/kopexa-grc/mautic-mcp-bundle/compare/v0.7.0...v0.8.0) (2026-11-05)
+
+
+### Features
+
+* email topics (categories) for the preference center ([902a540](https://github.com/kopexa-grc/mautic-mcp-bundle/commit/902a540a1b29a28c7bd90a04b3b1399fbd51f6f6))
+
 ## [0.7.0](https://github.com/kopexa-grc/mautic-mcp-bundle/compare/v0.6.1...v0.7.0) (2026-11-03)
 
 
