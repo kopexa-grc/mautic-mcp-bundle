@@ -100,6 +100,8 @@ class LayoutTools
         $email->setLanguage('' !== $language ? $language : (string) $this->parameters->get('locale', 'en'));
         $email->setDescription('Created via MCP from the '.$theme.' layout. Review before publishing.');
         $email->setIsPublished(false);
+        // Like Mautic's email editor: "Mailer is owner" defaults to the global setting.
+        $email->setUseOwnerAsMailer((bool) $this->parameters->get('mailer_is_owner'));
         $this->topics->apply($email, $topic);
         foreach ($this->segmentEntities($context, $segmentIds) as $segment) {
             $email->addList($segment);
