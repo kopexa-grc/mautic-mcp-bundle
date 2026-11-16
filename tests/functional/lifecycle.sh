@@ -26,7 +26,7 @@ seg_email="$(tool "$access" create_email_draft "$(jq -nc --arg h "$html" --argjs
 no_unsub="$(tool "$access" create_email_draft "$(jq -nc --argjson s "$seg" '{name: "No unsubscribe", subject: "x", html: "<p>x</p>", type: "segment", segmentIds: [$s], topic: ""}')" | jq -r .id)"
 
 denied="$(call "$access" publish_email "{\"id\":$seg_email}")"
-grep -q '^HTTP/1.1 403' "$WORK/mcp-headers" && grep -qi '^www-authenticate:.*insufficient_scope.*mcp:emails:publish' "$WORK/mcp-headers" \
+grep -q '^HTTP/1.1 403' "$WORK/mcp-headers" && grep -qi '^www-authenticate:.*insufficient_scope' "$WORK/mcp-headers" && grep -qi '^www-authenticate:.*scope="[^"]*mcp:emails:publish' "$WORK/mcp-headers" \
   && [[ "$(api "$BASE/api/emails/$seg_email" | jq -r .email.isPublished)" == false ]] \
   && pass "publish_email needs the opt-in scope mcp:emails:publish (403, step-up names it)" || { cat "$WORK/mcp-headers"; fail "publish without scope"; }
 
@@ -56,7 +56,7 @@ tool "$access" set_campaign_steps "$(jq -nc --argjson c "$camp" --argjson e "$in
   && [[ "$(db "SELECT COUNT(*) FROM emails WHERE id = $in_campaign")" == 1 ]] \
   && pass "emails used by a campaign are not deleted (campaign named)" || fail "email in campaign deleted"
 denied="$(call "$access" delete_email "{\"id\":$no_unsub}")"
-grep -qi '^www-authenticate:.*insufficient_scope.*mcp:emails:delete' "$WORK/mcp-headers" \
+grep -qi '^www-authenticate:.*insufficient_scope' "$WORK/mcp-headers" && grep -qi '^www-authenticate:.*scope="[^"]*mcp:emails:delete' "$WORK/mcp-headers" \
   && pass "delete_email needs the opt-in scope mcp:emails:delete" || { cat "$WORK/mcp-headers"; fail "delete without scope"; }
 jq -e '.dry_run == true and .lost.sent == 0' <<<"$(tool "$pub_token" delete_email "{\"id\":$no_unsub,\"dryRun\":true}")" >/dev/null \
   && [[ "$(db "SELECT COUNT(*) FROM emails WHERE id = $no_unsub")" == 1 ]] \
