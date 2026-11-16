@@ -69,12 +69,12 @@ class EmailLifecycleTools
             'id'           => $email->getId(),
             'name'         => $email->getName(),
             'type'         => 'list' === $email->getEmailType() ? 'segment' : 'template',
-            'published'    => $email->isPublished(),
+            'published'    => (bool) $email->getIsPublished(),
             'live_effects' => $this->effects($email, $publish, $start),
             'url'          => $this->url($email),
         ] + $this->topics->describe($email);
 
-        if ($publish === $email->isPublished() && null === $start) {
+        if ($publish === (bool) $email->getIsPublished() && null === $start) {
             return ['message' => $publish ? 'Already published.' : 'Already unpublished.'] + $result;
         }
         if ($dryRun) {
@@ -100,7 +100,8 @@ class EmailLifecycleTools
     {
         $email = $this->email($id);
         $this->auth->requireEntityAccess($context, $email, 'email:emails', 'delete');
-        if ($email->isPublished()) {
+        if ((bool) $email->getIsPublished()) {
+            // Also when it is only scheduled (publishUp in the future): it will send.
             throw new ToolCallException('The email is published. Unpublish it first (publish_email with publish: false).');
         }
         $campaigns = $this->campaignsUsing($email);
