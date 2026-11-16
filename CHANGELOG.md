@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.9.0](https://github.com/kopexa-grc/mautic-mcp-bundle/compare/v0.8.0...v0.9.0) (2026-11-16)
+
+
+### Features
+
+* publish, unpublish and delete emails (opt-in scopes mcp:emails:publish, mcp:emails:delete), scope groups on the consent page ([9de977f](https://github.com/kopexa-grc/mautic-mcp-bundle/commit/9de977f1cc1337b3d501ed95259755a5474ff2b3))
+
+
+### Bug fixes
+
+* new emails take Mautic's "Mailer is owner" setting, like the email editor ([72b1572](https://github.com/kopexa-grc/mautic-mcp-bundle/commit/72b15720ce314612663168ceff43306c9fb934a1))
+* scheduled emails count as published (publish flag, not the date status) ([cc730d0](https://github.com/kopexa-grc/mautic-mcp-bundle/commit/cc730d02793d094fe7814520f2178f503fefc54b))
+* scope map of publish_email and delete_email ([72e2faf](https://github.com/kopexa-grc/mautic-mcp-bundle/commit/72e2fafb19bb498e5f2c7c2bd6c23f145e64eab9))
+
 ## [0.8.0](https://github.com/kopexa-grc/mautic-mcp-bundle/compare/v0.7.0...v0.8.0) (2026-11-05)
 
 
