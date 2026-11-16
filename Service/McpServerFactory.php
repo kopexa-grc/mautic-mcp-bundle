@@ -99,7 +99,7 @@ class McpServerFactory
         );
         $scopes = new ScopePolicy(
             default: [McpScopes::READ],
-            tools: array_fill_keys(self::WRITE_TOOLS, [McpScopes::WRITE]) + array_fill_keys(self::CONTACT_TOOLS, [McpScopes::CONTACTS_WRITE] + ['publish_email' => [McpScopes::EMAILS_PUBLISH], 'delete_email' => [McpScopes::EMAILS_DELETE]]),
+            tools: array_fill_keys(self::WRITE_TOOLS, [McpScopes::WRITE]) + array_fill_keys(self::CONTACT_TOOLS, [McpScopes::CONTACTS_WRITE]) + ['publish_email' => [McpScopes::EMAILS_PUBLISH], 'delete_email' => [McpScopes::EMAILS_DELETE]],
         );
 
         return new StreamableHttpTransport(
