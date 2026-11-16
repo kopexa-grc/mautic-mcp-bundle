@@ -63,7 +63,7 @@ Setup, tools and permission model: [docs/mcp.md](https://github.com/kopexa-grc/m
   consistency). CI runs it on every push and pull request.
 - `tests/functional/run.sh` installs the plugin into a real Mautic 7 and
   tests it over HTTP; CI runs it on PHP 8.4 and 8.5. The tool tests are
-  split by topic (`core.sh`: drafts, scopes, campaign flows run by
+  split by topic (`lifecycle.sh`: publishing and deleting emails; `core.sh`: drafts, scopes, campaign flows run by
   Mautic's cron, running campaigns and their locks, roles;
   `scenarios.sh`: two realistic campaigns incl. a tracked email open;
   `contacts.sh`, `crm.sh`, `points.sh`, `stages.sh`, `topics.sh`).

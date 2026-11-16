@@ -19,6 +19,7 @@ use Mcp\Server\Transport\Http\OAuth\ProtectedResourceMetadata;
 use Mcp\Server\Transport\Http\OAuth\ScopePolicy;
 use Mcp\Server\Transport\StreamableHttpTransport;
 use MauticPlugin\KopexaMcpBundle\Tools\CompanyTools;
+use MauticPlugin\KopexaMcpBundle\Tools\EmailLifecycleTools;
 use MauticPlugin\KopexaMcpBundle\Tools\ContactTools;
 use MauticPlugin\KopexaMcpBundle\Tools\LayoutTools;
 use MauticPlugin\KopexaMcpBundle\Tools\PointTools;
@@ -60,6 +61,7 @@ class McpServerFactory
         private readonly PointTools $pointTools,
         private readonly StageTools $stageTools,
         private readonly ProjectTools $projectTools,
+        private readonly EmailLifecycleTools $emailLifecycle,
         private readonly Connection $connection,
         private readonly LoggerInterface $logger,
     ) {
@@ -75,7 +77,7 @@ class McpServerFactory
         return new ProtectedResourceMetadata(
             resource: $this->oauth->resource(),
             authorizationServers: [$this->oauth->issuer()],
-            scopesSupported: [McpScopes::READ, McpScopes::WRITE, McpScopes::CONTACTS_WRITE, McpScopes::CAMPAIGNS_LIVE],
+            scopesSupported: McpScopes::ALL,
             resourceName: 'Mautic',
             resourceDocumentation: 'https://github.com/kopexa-grc/mautic-stack/blob/main/docs/mcp.md',
         );
@@ -97,7 +99,7 @@ class McpServerFactory
         );
         $scopes = new ScopePolicy(
             default: [McpScopes::READ],
-            tools: array_fill_keys(self::WRITE_TOOLS, [McpScopes::WRITE]) + array_fill_keys(self::CONTACT_TOOLS, [McpScopes::CONTACTS_WRITE]),
+            tools: array_fill_keys(self::WRITE_TOOLS, [McpScopes::WRITE]) + array_fill_keys(self::CONTACT_TOOLS, [McpScopes::CONTACTS_WRITE] + ['publish_email' => [McpScopes::EMAILS_PUBLISH], 'delete_email' => [McpScopes::EMAILS_DELETE]]),
         );
 
         return new StreamableHttpTransport(
@@ -137,7 +139,7 @@ class McpServerFactory
                 'Stages are the lifecycle of a contact (list_stages, ordered by weight). New stages are unpublished; set_contact_stage only moves contacts into published stages and can make dynamic segments (and their campaigns) pick the contact up: dryRun first, show live_effects.',
                 'Projects group items (emails, campaigns, segments, forms, point actions, stages, ...) by topic; assigning items to a project changes nothing else about them.',
                 'For exports to other systems, search_contacts / search_companies with includeFields return all fields; paginate with limit/offset. get_contact_activity shows a contact\'s history (opens, clicks, visits, forms, points).',
-                'Emails and new campaigns are created unpublished; publishing them and sending stay with a person in Mautic.',
+                'Emails and new campaigns are created unpublished. publish_email (scope mcp:emails:publish) publishes or unpublishes an email: publishing a SEGMENT email SENDS it to its segments. delete_email (scope mcp:emails:delete) deletes unpublished emails no campaign uses. Call both with dryRun first, show the user live_effects (recipients, campaigns) or what is lost, and act only after they confirm. Publishing campaigns stays with a person in Mautic.',
                 'Exception: flows of RUNNING (published) campaigns can be edited (set_campaign_steps, update/add/remove_campaign_step) if the instance allows it and the user granted the scope mcp:campaigns:live. Such changes are live: Mautic\'s scheduler executes them for the contacts in the campaign and can send emails. Always call with dryRun first, show the user live_effects (outbound steps, contacts in the campaign, save_allowed) and save only after they confirm.',
                 'Every call runs with the Mautic permissions of the signed-in user.',
                 'Return the "url" of created drafts to the user so they can review them.',
@@ -185,6 +187,8 @@ class McpServerFactory
             ->addTool([$this->pointTools, 'updatePointTrigger'], 'update_point_trigger', 'Update point trigger', null, new ToolAnnotations(readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false))
             ->addTool([$this->pointTools, 'adjustContactPoints'], 'adjust_contact_points', 'Change contact points', null, new ToolAnnotations(readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true))
             ->addTool([$this->write, 'sendTestEmail'], 'send_test_email', 'Send test email to yourself', null, new ToolAnnotations(readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true))
+            ->addTool([$this->emailLifecycle, 'publishEmail'], 'publish_email', 'Publish or unpublish email', null, new ToolAnnotations(readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true))
+            ->addTool([$this->emailLifecycle, 'deleteEmail'], 'delete_email', 'Delete email', null, new ToolAnnotations(readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false))
             ->addTool([$this->contacts, 'addContactsToSegment'], 'add_contacts_to_segment', 'Add contacts to segment', null, new ToolAnnotations(readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false))
             ->addTool([$this->contacts, 'removeContactsFromSegment'], 'remove_contacts_from_segment', 'Remove contacts from segment', null, new ToolAnnotations(readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false))
             ->addTool([$this->write, 'createEmailDraft'], 'create_email_draft', 'Create email draft', null, $rw)

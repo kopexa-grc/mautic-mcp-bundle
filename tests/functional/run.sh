@@ -49,4 +49,6 @@ source "$here/points.sh"
 source "$here/stages.sh"
 # shellcheck source=tests/functional/topics.sh
 source "$here/topics.sh"
+# shellcheck source=tests/functional/lifecycle.sh
+source "$here/lifecycle.sh"
 echo "all MCP checks passed"
