@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.10.0](https://github.com/kopexa-grc/mautic-mcp-bundle/compare/v0.9.0...v0.10.0) (2026-11-20)
+
+
+### ⚠ BREAKING CHANGES
+
+* update_email changes drafts and published or sent emails ([#8](https://github.com/kopexa-grc/mautic-mcp-bundle/issues/8))
+
+### Features
+
+* update_email changes drafts and published or sent emails ([#8](https://github.com/kopexa-grc/mautic-mcp-bundle/issues/8)) ([f2f5793](https://github.com/kopexa-grc/mautic-mcp-bundle/commit/f2f579369d37befed96e2caabe40988daa870a81))
+
 ## [0.9.0](https://github.com/kopexa-grc/mautic-mcp-bundle/compare/v0.8.0...v0.9.0) (2026-11-16)
 
 
