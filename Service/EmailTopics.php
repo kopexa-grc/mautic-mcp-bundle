@@ -67,6 +67,22 @@ class EmailTopics
         return true;
     }
 
+    /**
+     * What setting $topic ("" clears) would do, without changing the email.
+     * widens: an existing topic is changed or removed, so the email can reach
+     * people who switched the old one off.
+     *
+     * @return array{category: Category|null, changed: bool, widens: bool}
+     */
+    public function plan(Email $email, string|int $topic): array
+    {
+        $category = '' === trim((string) $topic) ? null : $this->resolve($topic);
+        $previous = $email->getCategory();
+        $changed  = $previous?->getId() !== $category?->getId();
+
+        return ['category' => $category, 'changed' => $changed, 'widens' => $changed && null !== $previous];
+    }
+
     /** @return array{topic: string|null, topic_warning?: string} */
     public function describe(Email $email): array
     {

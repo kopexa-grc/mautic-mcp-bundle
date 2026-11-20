@@ -31,7 +31,7 @@ final class McpScopes implements ScopeProviderInterface
         yield self::scope(self::READ, 'Read contacts, segments, emails, campaigns and statistics', 'Read', default: true);
         yield self::scope(self::WRITE, 'Create and edit unpublished emails and campaigns and their campaign flows', 'Edit');
         yield self::scope(self::CONTACTS_WRITE, 'Create and update contacts, create segments, add contacts to segments and remove them (contacts added to segments can enter running campaigns and segment emails)', 'Edit');
-        yield self::scope(self::EMAILS_PUBLISH, 'Publish and unpublish emails: publishing a segment email SENDS it to the segment', 'Live: sends or deletes', optIn: true);
+        yield self::scope(self::EMAILS_PUBLISH, 'Publish and unpublish emails, and change published or sent ones: publishing a segment email SENDS it to the segment, changes go to its next recipients', 'Live: sends or deletes', optIn: true);
         yield self::scope(self::EMAILS_DELETE, 'Delete unpublished emails that no campaign uses, with their statistics', 'Live: sends or deletes', optIn: true);
         yield self::scope(self::CAMPAIGNS_LIVE, 'Change RUNNING campaigns: changes are live and Mautic may send emails because of them', 'Live: sends or deletes', optIn: true);
     }

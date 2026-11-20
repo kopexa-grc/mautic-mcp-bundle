@@ -24,7 +24,10 @@ Already included in the hardened Mautic image
 Claude, ChatGPT and other MCP clients can:
 
 - read contacts, segments, emails, campaigns and email statistics
-- create **unpublished** emails and campaigns
+- create **unpublished** emails and campaigns, and change emails with all
+  their settings: drafts freely, published or already sent ones (changes
+  are live for their next recipients) with the opt-in scope
+  `mcp:emails:publish`
 - create emails in the brand theme from panels and elements (themes with a
   block library, e.g. Kopexa), editable in Mautic's builder, and send a
   test to oneself

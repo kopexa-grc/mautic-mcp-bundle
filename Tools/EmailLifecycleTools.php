@@ -4,13 +4,13 @@ declare(strict_types=1);
 
 namespace MauticPlugin\KopexaMcpBundle\Tools;
 
-use Doctrine\DBAL\Connection;
 use Mautic\CoreBundle\Helper\CoreParametersHelper;
 use Mautic\EmailBundle\Entity\Email;
 use Mautic\EmailBundle\Model\EmailModel;
 use Mcp\Exception\ToolCallException;
 use Mcp\Server\RequestContext;
 use MauticPlugin\KopexaMcpBundle\Service\EmailTopics;
+use MauticPlugin\KopexaMcpBundle\Service\EmailLiveEffects;
 use MauticPlugin\KopexaMcpBundle\Service\McpUserContext;
 
 /**
@@ -32,7 +32,7 @@ class EmailLifecycleTools
         private readonly McpUserContext $auth,
         private readonly EmailModel $emails,
         private readonly EmailTopics $topics,
-        private readonly Connection $connection,
+        private readonly EmailLiveEffects $liveEffects,
         private readonly CoreParametersHelper $parameters,
     ) {
     }
@@ -170,14 +170,7 @@ class EmailLifecycleTools
     /** @return list<array{id: int, name: string, published: bool}> campaigns with a step sending this email */
     private function campaignsUsing(Email $email): array
     {
-        $prefix = defined('MAUTIC_TABLE_PREFIX') ? (string) MAUTIC_TABLE_PREFIX : '';
-        $rows   = $this->connection->fetchAllAssociative(
-            "SELECT DISTINCT c.id, c.name, c.is_published FROM {$prefix}campaign_events e JOIN {$prefix}campaigns c ON c.id = e.campaign_id
-             WHERE e.channel = 'email' AND e.channel_id = ? AND e.deleted IS NULL ORDER BY c.id",
-            [(int) $email->getId()]
-        );
-
-        return array_map(fn (array $r): array => ['id' => (int) $r['id'], 'name' => (string) $r['name'], 'published' => (bool) $r['is_published']], $rows);
+        return $this->liveEffects->campaignsUsing($email);
     }
 
     private function url(Email $email): string
