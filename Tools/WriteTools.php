@@ -18,6 +18,7 @@ use Mcp\Capability\Attribute\Schema;
 use Mcp\Exception\ToolCallException;
 use Mcp\Server\RequestContext;
 use MauticPlugin\KopexaMcpBundle\Service\CampaignFlowBuilder;
+use MauticPlugin\KopexaMcpBundle\Service\EmailLiveEffects;
 use MauticPlugin\KopexaMcpBundle\Service\McpScopes;
 use MauticPlugin\KopexaMcpBundle\Service\McpUserContext;
 use MauticPlugin\KopexaMcpBundle\Service\EmailTopics;
@@ -59,8 +60,8 @@ const STEPS_SCHEMA = [
  * Exception by design: the flow of a RUNNING campaign can be edited
  * (campaign step tools), and Mautic's scheduler then executes the changed
  * steps for the contacts in it. Results carry live_effects for that.
- * Published or already sent emails
- * cannot be changed. Publishing and sending stay a human decision in Mautic.
+ * update_email changes drafts and live emails; on live ones, changes
+ * recipients get need mcp:emails:publish (EmailLiveEffects).
  */
 class WriteTools
 {
@@ -74,6 +75,7 @@ class WriteTools
         private readonly LeadModel $leads,
         private readonly FakeContactHelper $fakeContact,
         private readonly EmailTopics $topics,
+        private readonly EmailLiveEffects $liveEffects,
     ) {
     }
 
@@ -128,72 +130,128 @@ class WriteTools
     }
 
     /**
-     * Change an email draft. Only unpublished emails that were never sent can be changed. Omitted fields stay as they are.
+     * Change any email: drafts as well as published or already sent ones. Omitted fields stay as they are; "" clears optional fields (topic, preheader, plainText, fromName, fromAddress, replyToAddress). Publishing is publish_email. On a LIVE email (published or sent), changes recipients get (content, sender, segments, a changed or removed topic) apply to its next sends at once and need the scope mcp:emails:publish: call with dryRun first, show the user live_effects and save only after they confirm. Renaming it or adding a topic to an email without one is always possible.
      *
-     * @param int            $id         Email ID
-     * @param string|null    $name       New internal name
-     * @param string|null    $subject    New subject line
-     * @param string|null    $html       New full HTML document
-     * @param list<int>|null $segmentIds Replace the segments (segment emails)
-     * @param string|null    $preheader  New preview text
-     * @param string|null    $topic      New topic (name or ID, "" removes it), see list_email_topics
+     * @param int            $id             Email ID
+     * @param string|null    $name           New internal name
+     * @param string|null    $subject        New subject line
+     * @param string|null    $html           New full HTML document (code mode; for brand-theme emails use update_email_layout)
+     * @param string|null    $plainText      New plain-text version
+     * @param string|null    $preheader      New preview text
+     * @param list<int>|null $segmentIds     Replace the segments (segment emails)
+     * @param string|null    $topic          New topic (name or ID, "" removes it), see list_email_topics
+     * @param string|null    $language       Language code, e.g. "de" or "en"
+     * @param string|null    $fromName       Sender name ("" = Mautic's default)
+     * @param string|null    $fromAddress    Sender address ("" = Mautic's default)
+     * @param string|null    $replyToAddress Reply-to address ("" = none)
+     * @param bool           $dryRun         Report what would change and live_effects, change nothing
      *
      * @return array<string, mixed>
      */
-    public function updateEmailDraft(
+    public function updateEmail(
         RequestContext $context,
         int $id,
         ?string $name = null,
         ?string $subject = null,
         ?string $html = null,
-        ?array $segmentIds = null,
+        ?string $plainText = null,
         ?string $preheader = null,
+        ?array $segmentIds = null,
         ?string $topic = null,
+        ?string $language = null,
+        ?string $fromName = null,
+        ?string $fromAddress = null,
+        ?string $replyToAddress = null,
+        bool $dryRun = false,
     ): array {
         $email = $this->emails->getEntity($id);
         if (!$email instanceof Email || !$email->getId()) {
             throw new ToolCallException(sprintf('Email %d not found.', $id));
         }
         $this->auth->requireEntityAccess($context, $email, 'email:emails', 'edit');
-        if ($email->isPublished() || $email->getSentCount(true) > 0) {
-            throw new ToolCallException('Only unpublished drafts that were never sent can be changed via MCP. Unpublish or clone the email in Mautic first.');
+        foreach (['fromAddress' => $fromAddress, 'replyToAddress' => $replyToAddress] as $field => $address) {
+            if (null !== $address && '' !== trim($address) && false === filter_var(trim($address), FILTER_VALIDATE_EMAIL)) {
+                throw new ToolCallException(sprintf('%s "%s" is not an email address.', $field, $address));
+            }
+        }
+        if (null !== $name && '' === trim($name) || null !== $subject && '' === trim($subject) || null !== $html && '' === trim($html)) {
+            throw new ToolCallException('name, subject and html cannot be empty.');
         }
 
-        $changed = [];
-        if (null !== $name) {
-            $email->setName($name);
-            $changed[] = 'name';
+        // Work out every change first, so a dry run and a refused change leave the email untouched.
+        $optional = fn (?string $v): ?string => null === $v || '' === trim($v) ? null : trim($v);
+        $set      = [];
+        if (null !== $name && $name !== $email->getName()) {
+            $set['name'] = fn () => $email->setName($name);
         }
-        if (null !== $subject) {
-            $email->setSubject($subject);
-            $changed[] = 'subject';
+        if (null !== $subject && $subject !== $email->getSubject()) {
+            $set['subject'] = fn () => $email->setSubject($subject);
         }
-        if (null !== $html) {
-            $email->setCustomHtml($html);
-            $email->setTemplate('mautic_code_mode');
-            $changed[] = 'html';
+        if (null !== $html && $html !== $email->getCustomHtml()) {
+            $set['html'] = function () use ($email, $html): void {
+                $email->setCustomHtml($html);
+                $email->setTemplate('mautic_code_mode');
+            };
         }
-        if (null !== $preheader) {
-            $email->setPreheaderText($preheader);
-            $changed[] = 'preheader';
+        foreach ([
+            'plainText'      => [$plainText, $email->getPlainText(), fn ($v) => $email->setPlainText($v)],
+            'preheader'      => [$preheader, $email->getPreheaderText(), fn ($v) => $email->setPreheaderText($v)],
+            'fromName'       => [$fromName, $email->getFromName(), fn ($v) => $email->setFromName($v)],
+            'fromAddress'    => [$fromAddress, $email->getFromAddress(), fn ($v) => $email->setFromAddress($v)],
+            'replyToAddress' => [$replyToAddress, $email->getReplyToAddress(), fn ($v) => $email->setReplyToAddress($v)],
+        ] as $field => [$new, $current, $setter]) {
+            if (null !== $new && $optional($new) !== ($optional($current) ?? null)) {
+                $value       = $optional($new);
+                $set[$field] = fn () => $setter($value);
+            }
         }
-        if ($this->topics->apply($email, $topic)) {
-            $changed[] = 'topic';
+        if (null !== $language && '' !== trim($language) && trim($language) !== $email->getLanguage()) {
+            $set['language'] = fn () => $email->setLanguage(trim($language));
+        }
+        $topicPlan = null === $topic ? null : $this->topics->plan($email, $topic);
+        if (null !== $topicPlan && $topicPlan['changed']) {
+            $set['topic'] = fn () => $email->setCategory($topicPlan['category']);
         }
         if (null !== $segmentIds) {
-            foreach ($email->getLists()->toArray() as $segment) {
-                $email->removeList($segment);
+            $segments = $this->segmentEntities($context, $segmentIds);
+            $current  = array_map(fn ($s): int => (int) $s->getId(), $email->getLists()->toArray());
+            $wanted   = array_map(fn (LeadList $s): int => (int) $s->getId(), $segments);
+            sort($current);
+            sort($wanted);
+            if ($current !== $wanted) {
+                $set['segments'] = function () use ($email, $segments): void {
+                    foreach ($email->getLists()->toArray() as $segment) {
+                        $email->removeList($segment);
+                    }
+                    foreach ($segments as $segment) {
+                        $email->addList($segment);
+                    }
+                };
             }
-            foreach ($this->segmentEntities($context, $segmentIds) as $segment) {
-                $email->addList($segment);
-            }
-            $changed[] = 'segments';
         }
 
-        $this->emails->saveEntity($email);
-        $this->auth->audit('email', (int) $email->getId(), 'update', ['fields' => $changed]);
+        // Adding a topic where there was none only narrows the recipients.
+        $checked = array_keys($set);
+        if (isset($set['topic']) && !$topicPlan['widens']) {
+            $checked = array_values(array_diff($checked, ['topic']));
+        }
+        $effects = $this->liveEffects->guard($context, $email, $checked);
+        $extra   = ['changed' => array_keys($set)] + (null !== $effects ? ['live_effects' => $effects] : []);
 
-        return $this->emailResult($email, 'Draft updated ('.implode(', ', $changed ?: ['nothing']).').');
+        if ([] === $set) {
+            return $extra + $this->emailResult($email, 'Nothing to change.');
+        }
+        if ($dryRun) {
+            return ['dry_run' => true] + $extra + $this->emailResult($email, 'Dry run, nothing changed. Would change: '.implode(', ', array_keys($set)).'.');
+        }
+
+        foreach ($set as $apply) {
+            $apply();
+        }
+        $this->emails->saveEntity($email);
+        $this->auth->audit('email', (int) $email->getId(), 'update', ['fields' => array_keys($set), 'live' => null !== $effects]);
+
+        return $extra + $this->emailResult($email, 'Email updated ('.implode(', ', array_keys($set)).').'.(null !== $effects && $effects['live'] ? ' It is live: '.$effects['note'] : ''));
     }
 
     /**

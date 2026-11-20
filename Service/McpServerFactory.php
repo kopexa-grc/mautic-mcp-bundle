@@ -45,7 +45,7 @@ class McpServerFactory
     public const VERSION = '0.9.0'; // x-release-please-version
 
     /** Tools that need the mcp:write scope. */
-    private const WRITE_TOOLS = ['create_email_draft', 'update_email_draft', 'send_test_email', 'create_email_from_layout', 'update_email_layout', 'create_point_group', 'update_point_group', 'create_point_action', 'update_point_action', 'create_point_trigger', 'update_point_trigger', 'create_stage', 'update_stage', 'create_project', 'update_project', 'add_to_project', 'remove_from_project', 'create_campaign_draft', 'update_campaign_draft', 'set_campaign_steps', 'update_campaign_step', 'add_campaign_step', 'remove_campaign_step'];
+    private const WRITE_TOOLS = ['create_email_draft', 'update_email', 'send_test_email', 'create_email_from_layout', 'update_email_layout', 'create_point_group', 'update_point_group', 'create_point_action', 'update_point_action', 'create_point_trigger', 'update_point_trigger', 'create_stage', 'update_stage', 'create_project', 'update_project', 'add_to_project', 'remove_from_project', 'create_campaign_draft', 'update_campaign_draft', 'set_campaign_steps', 'update_campaign_step', 'add_campaign_step', 'remove_campaign_step'];
 
     /** Tools that need the mcp:contacts:write scope. */
     private const CONTACT_TOOLS = ['upsert_contacts', 'create_segment', 'update_segment', 'add_contacts_to_segment', 'remove_contacts_from_segment', 'create_contact_field', 'upsert_companies', 'add_contacts_to_company', 'remove_contacts_from_company', 'adjust_contact_points', 'set_contact_stage'];
@@ -192,7 +192,7 @@ class McpServerFactory
             ->addTool([$this->contacts, 'addContactsToSegment'], 'add_contacts_to_segment', 'Add contacts to segment', null, new ToolAnnotations(readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false))
             ->addTool([$this->contacts, 'removeContactsFromSegment'], 'remove_contacts_from_segment', 'Remove contacts from segment', null, new ToolAnnotations(readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false))
             ->addTool([$this->write, 'createEmailDraft'], 'create_email_draft', 'Create email draft', null, $rw)
-            ->addTool([$this->write, 'updateEmailDraft'], 'update_email_draft', 'Update email draft', null, $rw)
+            ->addTool([$this->write, 'updateEmail'], 'update_email', 'Update email', null, new ToolAnnotations(readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true))
             ->addTool([$this->write, 'createCampaignDraft'], 'create_campaign_draft', 'Create campaign draft', null, $rw)
             ->addTool([$this->write, 'updateCampaignDraft'], 'update_campaign_draft', 'Update campaign draft', null, $rw)
             ->addTool([$this->write, 'setCampaignSteps'], 'set_campaign_steps', 'Set campaign flow', null, new ToolAnnotations(readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false))

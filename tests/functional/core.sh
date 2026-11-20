@@ -16,13 +16,13 @@ draft="$(call "$access" create_email_draft '{"name":"MCP smoke draft","subject":
 eid="$(result "$draft" | jq -r '.id // empty')"
 [[ "$eid" =~ ^[0-9]+$ ]] && [[ "$(result "$draft" | jq -r .published)" == false ]] \
   && pass "create_email_draft creates an unpublished email" || { echo "$draft" | head -c 600; fail "create_email_draft"; }
-upd="$(call "$access" update_email_draft "{\"id\":$eid,\"subject\":\"Hallo Welt\"}")"
+upd="$(call "$access" update_email "{\"id\":$eid,\"subject\":\"Hallo Welt\"}")"
 [[ "$(api "$BASE/api/emails/$eid" | jq -r .email.subject)" == "Hallo Welt" ]] \
-  && pass "update_email_draft changes the draft" || { echo "$upd" | head -c 600; fail "update_email_draft"; }
+  && pass "update_email changes the draft" || { echo "$upd" | head -c 600; fail "update_email"; }
 api -X PATCH "$BASE/api/emails/$eid/edit" -d isPublished=1 >/dev/null
-locked="$(call "$access" update_email_draft "{\"id\":$eid,\"subject\":\"changed\"}")"
-grep -q 'Only unpublished drafts' <<<"$(result "$locked")" && [[ "$(api "$BASE/api/emails/$eid" | jq -r .email.subject)" == "Hallo Welt" ]] \
-  && pass "published emails cannot be changed via MCP" || { echo "$locked" | head -c 600; fail "published email changed"; }
+locked="$(call "$access" update_email "{\"id\":$eid,\"subject\":\"changed\"}")"
+grep -q 'The email is published: changing subject.*mcp:emails:publish' <<<"$(result "$locked")" && [[ "$(api "$BASE/api/emails/$eid" | jq -r .email.subject)" == "Hallo Welt" ]] \
+  && pass "content of published emails needs mcp:emails:publish" || { echo "$locked" | head -c 600; fail "published email changed"; }
 denied="$(call "$read_token" create_email_draft '{"name":"x","subject":"x","html":"<p>x</p>"}')"
 grep -q '^HTTP/1.1 403' "$WORK/mcp-headers" && grep -qi '^www-authenticate:.*insufficient_scope' "$WORK/mcp-headers" \
   && grep -qi '^www-authenticate:.*scope="mcp:read mcp:write mcp:contacts:write"' "$WORK/mcp-headers" \

@@ -15,6 +15,7 @@ use Mcp\Exception\ToolCallException;
 use Mcp\Server\RequestContext;
 use MauticPlugin\GrapesJsBuilderBundle\Entity\GrapesJsBuilder;
 use MauticPlugin\KopexaMcpBundle\Service\EmailLayouts;
+use MauticPlugin\KopexaMcpBundle\Service\EmailLiveEffects;
 use MauticPlugin\KopexaMcpBundle\Service\EmailTopics;
 use MauticPlugin\KopexaMcpBundle\Service\McpUserContext;
 
@@ -46,6 +47,7 @@ class LayoutTools
         private readonly EntityManagerInterface $em,
         private readonly CoreParametersHelper $parameters,
         private readonly EmailTopics $topics,
+        private readonly EmailLiveEffects $liveEffects,
     ) {
     }
 
@@ -114,10 +116,11 @@ class LayoutTools
     }
 
     /**
-     * Replace the content of an unpublished, never-sent email with new panels (see list_email_layouts); optionally change the subject.
+     * Replace the content of an email with new panels in the brand theme (see list_email_layouts); optionally change subject, preview text and topic. Works on drafts and on published or already sent emails. On a LIVE email the new content goes to its next recipients at once: that needs the scope mcp:emails:publish; call with dryRun first, show the user live_effects and save only after they confirm. Other settings: update_email.
      *
      * @param list<array<string, mixed>> $panels Panels in order
      * @param string|null                $topic  New topic (name or ID, "" removes it), see list_email_topics
+     * @param bool                       $dryRun Report live_effects, change nothing
      *
      * @return array<string, mixed>
      */
@@ -129,17 +132,34 @@ class LayoutTools
         ?string $preheader = null,
         string $theme = '',
         ?string $topic = null,
+        bool $dryRun = false,
     ): array {
         $email = $this->emails->getEntity($id);
         if (!$email instanceof Email || !$email->getId()) {
             throw new ToolCallException(sprintf('Email %d not found.', $id));
         }
         $this->auth->requireEntityAccess($context, $email, 'email:emails', 'edit');
-        if ($email->isPublished() || $email->getSentCount(true) > 0) {
-            throw new ToolCallException('Only unpublished drafts that were never sent can be changed via MCP. Unpublish or clone the email in Mautic first.');
-        }
         $theme    = $this->theme('' !== $theme ? $theme : (isset($this->layouts->all()[(string) $email->getTemplate()]) ? (string) $email->getTemplate() : ''));
         $rendered = $this->layouts->render($theme, $panels);
+        $topicPlan = null === $topic ? null : $this->topics->plan($email, $topic);
+
+        $fields = ['content'];
+        if (null !== $subject && $subject !== $email->getSubject()) {
+            $fields[] = 'subject';
+        }
+        if (null !== $preheader && $preheader !== (string) $email->getPreheaderText()) {
+            $fields[] = 'preheader';
+        }
+        // Adding a topic where there was none only narrows the recipients.
+        if (null !== $topicPlan && $topicPlan['widens']) {
+            $fields[] = 'topic';
+        }
+        $effects = $this->liveEffects->guard($context, $email, $fields);
+        $extra   = null !== $effects ? ['live_effects' => $effects] : [];
+        if ($dryRun) {
+            return ['dry_run' => true] + $extra + $this->result($email, 'Dry run, nothing changed. Would replace the content ('.count($panels).' panel(s)).');
+        }
+
         $email->setTemplate($theme);
         $email->setCustomHtml($rendered['html']);
         $email->setPlainText($rendered['text']);
@@ -149,12 +169,14 @@ class LayoutTools
         if (null !== $preheader) {
             $email->setPreheaderText($preheader);
         }
-        $this->topics->apply($email, $topic);
+        if (null !== $topicPlan && $topicPlan['changed']) {
+            $email->setCategory($topicPlan['category']);
+        }
         $this->emails->saveEntity($email);
         $this->storeMjml($email, $rendered['mjml']);
-        $this->auth->audit('email', (int) $email->getId(), 'update', ['layout' => $theme, 'panels' => array_column($panels, 'type')]);
+        $this->auth->audit('email', (int) $email->getId(), 'update', ['layout' => $theme, 'panels' => array_column($panels, 'type'), 'live' => null !== $effects]);
 
-        return $this->result($email, 'Draft content replaced ('.count($panels).' panel(s)).');
+        return $extra + $this->result($email, 'Content replaced ('.count($panels).' panel(s)).'.(null !== $effects ? ' It is live: '.$effects['note'] : ''));
     }
 
     private function theme(string $theme): string
